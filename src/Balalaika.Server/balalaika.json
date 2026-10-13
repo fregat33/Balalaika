@@ -1,0 +1,20 @@
+{
+  "Balalaika": {
+    "Roots": [],
+    "IgnoredFolders": [],
+    "Port": 5301,
+    "Preload": [],
+    "DefaultSolution": null,
+    "IdleEvictionMinutes": 0,
+    "LoadWaitSeconds": 120,
+    "RestoreOnProjectChange": true,
+    "ReextractDependents": true,
+    "WarmUp": true,
+    "UnloadedRefreshSeconds": 60,
+    "UnloadedRefreshMaxWaitSeconds": 600,
+    "BlobRetentionDays": 30,
+    "DebounceMilliseconds": 500,
+    "LogDirectory": null,
+    "LogRetainedDays": 7
+  }
+}

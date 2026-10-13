@@ -1,0 +1,27 @@
+# Build output
+bin/
+obj/
+TestResults/
+
+# IDE
+.vs/
+.idea/
+*.user
+
+# Runtime artifacts of a locally started server
+server.log
+server.err.log
+server*.log
+server.pid
+
+# Local index database never lives here, but guard against accidental copies
+*.db
+*.db-wal
+*.db-shm
+
+# Machine-specific server configuration (roots, preloads); never committed
+balalaika.local.json
+
+# Private planning notes, kept out of the public repository
+docs/roadmap.md
+tasks/

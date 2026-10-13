@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Balalaika.Index/Balalaika.Index.csproj" />
+    <Project Path="src/Balalaika.Server/Balalaika.Server.csproj" />
+    <Project Path="src/Balalaika.Watcher/Balalaika.Watcher.csproj" />
+    <Project Path="src/Balalaika.Workspace/Balalaika.Workspace.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Balalaika.Tests/Balalaika.Tests.csproj" />
+  </Folder>
+</Solution>
