@@ -9,9 +9,22 @@ public abstract record IndexJob;
 public sealed record IndexSolutionJob(string SolutionPath, bool Force) : IndexJob;
 
 /// <summary>A debounced batch of changed paths from the file watcher.</summary>
-public sealed record FileChangesJob(IReadOnlyCollection<string> Paths) : IndexJob;
+/// <param name="CreatedDirectories">Directories reported as created or moved in; their content raises no file events of its own.</param>
+public sealed record FileChangesJob(IReadOnlyCollection<string> Paths, IReadOnlyCollection<string>? CreatedPaths = null, IReadOnlyCollection<string>? CreatedDirectories = null) : IndexJob;
 
-/// <summary>Compare every loaded solution with the disk (git checkout, watcher overflow).</summary>
+/// <summary>
+/// Forget a solution by name or path. Runs on the consumer, like every other index mutation, so a running index job can
+/// not recreate rows after the delete. <see cref="Result"/> carries what was forgotten (null: unknown solution).
+/// </summary>
+public sealed record ForgetSolutionJob(string Hint) : IndexJob
+{
+    public TaskCompletionSource<ForgottenSolution?> Result { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+}
+
+/// <summary>Forget every known solution whose file is gone (periodic sweep).</summary>
+public sealed record ForgetMissingJob : IndexJob;
+
+/// <summary>Compare every loaded solution with the disk (git checkout, watcher overflow), forget vanished solutions and find new ones.</summary>
 public sealed record FullReconcileJob : IndexJob;
 
 /// <summary>Reload a solution from MSBuild because project or solution files changed.</summary>

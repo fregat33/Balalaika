@@ -24,7 +24,8 @@ public sealed class QueryService(
     IOptions<BalalaikaOptions> options,
     SourceFilter filter,
     IBaseContentProvider git,
-    ILogger<QueryService> logger)
+    ILogger<QueryService> logger,
+    IndexActivity? activity = null)
 {
     private TimeSpan Wait => TimeSpan.FromSeconds(options.Value.LoadWaitSeconds);
 
@@ -100,6 +101,11 @@ public sealed class QueryService(
         int unfiltered = 0;
         foreach (ReferencedSymbol rs in referenced)
         {
+            if (!BindsToDeclaration(rs, symbol))
+            {
+                continue;
+            }
+
             foreach (ReferenceLocation loc in rs.Locations)
             {
                 if (loc.IsImplicit || !loc.Location.IsInSource)
@@ -389,7 +395,7 @@ public sealed class QueryService(
 
     // ------------------------------------------------------------------ get_call_graph
 
-    public async Task<string> GetCallGraphAsync(string spec, string? solution, string direction, bool includeExternal, string? scope, int limit, CancellationToken ct)
+    public async Task<string> GetCallGraphAsync(string spec, string? solution, string direction, bool includeExternal, string? scope, bool direct, int limit, CancellationToken ct)
     {
         string? badFilter = ReferenceFilter.TryParse(kind: null, scope, out ReferenceFilter criteria);
         if (badFilter is not null)
@@ -434,9 +440,8 @@ public sealed class QueryService(
                 }
             }
 
-            List<(CallSite Site, string Solution)> kept = all.Where(e => InScope(e.Site, criteria)).ToList();
-            sb.Append("Callers (").Append(CountLabel(kept.Count, all.Count, criteria)).Append(criteria.IsActive ? ", " + criteria.Describe() : "").Append(", live, loaded solutions only):").AppendLine();
-            List<string> lines = kept.Select(e => $"  {e.Site.Symbol.ToDisplayString(DisplayFormats.FullyQualifiedWithParameters)}  {Format(e.Site.Location)}  {e.Solution}").ToList();
+            (string header, List<string> lines) = FormatCallers(all, criteria, direct);
+            sb.AppendLine(header);
             pager.AppendPage(sb, lines, limit, $"get_call_graph callers of {r.Symbol.Name}");
         }
 
@@ -456,6 +461,29 @@ public sealed class QueryService(
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// The callers header and rows. Calls dispatched through a base or interface member are kept, tagged <c>via &lt;member&gt;</c>
+    /// and counted apart in the header; <paramref name="directOnly"/> drops them.
+    /// </summary>
+    public static (string Header, List<string> Lines) FormatCallers(IEnumerable<(CallSite Site, string Solution)> sites, ReferenceFilter criteria, bool directOnly)
+    {
+        List<(CallSite Site, string Solution)> all = sites.Where(e => !directOnly || e.Site.IsDirect).ToList();
+        List<(CallSite Site, string Solution)> kept = all.Where(e => InScope(e.Site, criteria)).ToList();
+        int via = kept.Count(e => !e.Site.IsDirect);
+
+        StringBuilder header = new("Callers (");
+        header.Append(CountLabel(kept.Count, all.Count, criteria));
+        if (via > 0)
+        {
+            header.Append($": {kept.Count - via} direct, {via} via base or interface members");
+        }
+
+        header.Append(criteria.IsActive ? ", " + criteria.Describe() : "").Append(", live, loaded solutions only):");
+        List<string> lines = kept.Select(e => $"  {e.Site.Symbol.ToDisplayString(DisplayFormats.FullyQualifiedWithParameters)}  {Format(e.Site.Location)}  {e.Solution}"
+            + (e.Site.ViaMember is null ? "" : "  via " + e.Site.ViaMember.ToDisplayString(DisplayFormats.FullyQualifiedWithParameters))).ToList();
+        return (header.ToString(), lines);
     }
 
     // ------------------------------------------------------------------ review_changes
@@ -573,7 +601,7 @@ public sealed class QueryService(
         {
             IReadOnlyList<CallSite> callers = await CallGraph.FindCallersAsync(symbol, loaded.Solution, ct).ConfigureAwait(false);
             int testCallers = callers.Count(c => c.Document is not null && ProjectKinds.IsTestProject(c.Document.Project.Name, c.Document.FilePath ?? ""));
-            return "callers: " + ChangeReview.SplitCount(callers.Count, testCallers);
+            return "callers: " + ChangeReview.SplitCallers(callers.Count, callers.Count(c => !c.IsDirect), testCallers);
         }
 
         return null;
@@ -652,10 +680,16 @@ public sealed class QueryService(
         return compilation is null ? null : DocumentationCommentId.GetFirstSymbolForDeclarationId(docId, compilation);
     }
 
+    /// <summary>True for the group of usages that bind to <paramref name="symbol"/> itself, not to a related (interface, overridden) member.</summary>
+    public static bool BindsToDeclaration(ReferencedSymbol group, ISymbol symbol)
+    {
+        return SymbolEqualityComparer.Default.Equals(group.Definition.OriginalDefinition, symbol.OriginalDefinition);
+    }
+
     /// <summary>
     /// Source locations that bind to this declaration itself. <c>SymbolFinder</c> also returns the groups of related
-    /// symbols (the interface member an implementation satisfies, overridden members), which <c>find_references</c>
-    /// lists but an impact count must not: a consumer's <c>Consume</c> would otherwise count every consumer's callers.
+    /// symbols (the interface member an implementation satisfies, overridden members), which neither
+    /// <c>find_references</c> nor an impact count keeps: a consumer's <c>Consume</c> would otherwise count every consumer's callers.
     /// </summary>
     private static async Task<(int Total, int Tests)> CountLiveReferencesAsync(ISymbol symbol, Solution solution, CancellationToken ct)
     {
@@ -663,7 +697,7 @@ public sealed class QueryService(
         int tests = 0;
         foreach (ReferencedSymbol rs in await SymbolFinder.FindReferencesAsync(symbol, solution, ct).ConfigureAwait(false))
         {
-            if (!SymbolEqualityComparer.Default.Equals(rs.Definition.OriginalDefinition, symbol.OriginalDefinition))
+            if (!BindsToDeclaration(rs, symbol))
             {
                 continue;
             }
@@ -1476,7 +1510,8 @@ public sealed class QueryService(
 
     public async Task<string> LoadSolutionAsync(string solution, CancellationToken ct)
     {
-        string? path = workspaces.ResolveSolution(solution);
+        // A full path to an existing solution file that is not known yet (new worktree, or outside the roots) is registered first.
+        string? path = workspaces.ResolveSolution(solution) ?? workspaces.RegisterExistingSolution(solution);
         if (path is null)
         {
             return $"Unknown solution: {solution}. Known: {string.Join(", ", workspaces.KnownSolutions.Select(SolutionDiscovery.SolutionName))}";
@@ -1489,6 +1524,22 @@ public sealed class QueryService(
         }
 
         return $"{loaded.Name}: {loaded.Solution.ProjectIds.Count} projects loaded in {loaded.LoadDuration.TotalSeconds:N1}s, {loaded.LoadDiagnostics.Count} workspace diagnostics.";
+    }
+
+    public async Task<string> ForgetSolutionAsync(string solution, CancellationToken ct)
+    {
+        // Forgetting runs on the index consumer, serialised with the jobs that write rows, so none can bring them back.
+        // The consumer has no request view, so the hint is resolved here, among the solutions this request sees, to a path.
+        string? visible = string.IsNullOrWhiteSpace(solution) ? null : workspaces.ResolveSolution(solution);
+        ForgetSolutionJob job = new(visible ?? "");
+        _ = jobs.Enqueue(job);
+        ForgottenSolution? forgotten = await job.Result.Task.WaitAsync(ct).ConfigureAwait(false);
+        if (forgotten is null)
+        {
+            return $"Unknown solution: {solution}. Known: {string.Join(", ", workspaces.KnownSolutions.Select(SolutionDiscovery.SolutionName))}";
+        }
+
+        return $"Forgot {forgotten.Name} ({forgotten.Path}): {forgotten.ProjectsRemoved} projects removed from the index.";
     }
 
     public string Status()
@@ -1508,6 +1559,11 @@ public sealed class QueryService(
         }
 
         sb.AppendLine();
+
+        // Pending counts the job being processed too: a job leaves the count only when it has finished.
+        int pendingJobs = jobs.Pending + (activity?.Refreshing ?? 0);
+        int buffered = activity?.Buffered ?? 0;
+        sb.AppendLine(pendingJobs == 0 && buffered == 0 ? "Ready: yes" : $"Ready: no ({pendingJobs} jobs, {buffered} buffered)");
         sb.Append("Git: ").AppendLine(git.Describe());
         if (warmUp.Describe() is { } warmUpLine)
         {
@@ -1539,6 +1595,7 @@ public sealed class QueryService(
                 sb.Append("  error: ").Append(s.Error);
             }
 
+            sb.Append("  head ").Append(s.IndexedHead is { Length: >= 7 } head ? head[..7] : s.IndexedHead ?? "-");
             sb.Append("  ").Append(s.Path).AppendLine();
         }
 

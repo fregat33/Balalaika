@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Threading.Channels;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Text;
 using Microsoft.Extensions.Options;
@@ -19,12 +20,15 @@ public sealed class IndexingHostedService(
     IndexJobQueue jobs,
     WarmUpTracker warmUp,
     PendingRefreshes pendingRefreshes,
+    IndexActivity activity,
     IOptions<BalalaikaOptions> options,
     SourceFilter filter,
     IBaseContentProvider git,
     ILogger<IndexingHostedService> logger) : BackgroundService
 {
     private readonly ConcurrentDictionary<string, Task> _loadIndexing = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Channel<string> _immediateRefreshes = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
+    private readonly HashSet<string> _immediateQueued = new(StringComparer.OrdinalIgnoreCase);
     private RepoWatcher? _watcher;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -55,16 +59,21 @@ public sealed class IndexingHostedService(
         // Every load indexes the solution once. The job's completion is kept per solution so a caller that needs the
         // index (the warm-up) awaits this job instead of queueing a second, redundant walk behind it.
         workspaces.SolutionLoaded += loaded => this._loadIndexing[loaded.SolutionPath] = jobs.Enqueue(new IndexSolutionJob(loaded.SolutionPath, Force: false));
+        workspaces.SolutionForgotten += forgotten => this._loadIndexing.TryRemove(forgotten.Path, out _);
 
         this._watcher = new RepoWatcher(
-            batch => jobs.Enqueue(batch.Overflowed ? new FullReconcileJob() : new FileChangesJob(batch.Paths)),
+            batch => jobs.Enqueue(batch.Overflowed ? new FullReconcileJob() : new FileChangesJob(batch.Paths, batch.CreatedPaths, batch.CreatedDirectories)),
             TimeSpan.FromMilliseconds(Math.Max(100, opts.DebounceMilliseconds)),
             logger,
-            opts.IgnoredFolders);
+            opts.IgnoredFolders,
+            activity);
         foreach (string root in opts.Roots)
         {
             this._watcher.Watch(Path.GetFullPath(Environment.ExpandEnvironmentVariables(root)));
         }
+
+        this.WatchWorktreeHeads();
+        Task immediateRefreshTask = this.RunImmediateRefreshAsync(stoppingToken);
 
         List<Task> preloads = [];
         HashSet<string> preloaded = new(StringComparer.OrdinalIgnoreCase);
@@ -89,6 +98,9 @@ public sealed class IndexingHostedService(
         Task refreshTask = opts.UnloadedRefreshSeconds > 0
             ? this.RunUnloadedRefreshAsync(TimeSpan.FromSeconds(opts.UnloadedRefreshSeconds), TimeSpan.FromSeconds(Math.Max(opts.UnloadedRefreshSeconds, opts.UnloadedRefreshMaxWaitSeconds)), stoppingToken)
             : Task.CompletedTask;
+        Task sweepTask = opts.DiscoverySweepSeconds > 0
+            ? this.RunDiscoverySweepAsync(TimeSpan.FromSeconds(opts.DiscoverySweepSeconds), stoppingToken)
+            : Task.CompletedTask;
 
         await foreach (QueuedJob queued in jobs.ReadAllAsync(stoppingToken))
         {
@@ -110,7 +122,99 @@ public sealed class IndexingHostedService(
             }
         }
 
-        await Task.WhenAll(eviction, warmUpTask, refreshTask).ConfigureAwait(false);
+        await Task.WhenAll(eviction, warmUpTask, refreshTask, sweepTask, immediateRefreshTask).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// A linked worktree keeps its <c>HEAD</c> outside the working tree, so no root watcher sees a checkout in it, and
+    /// a branch moved from outside (<c>git update-ref</c>) changes only a ref file. Watches <c>HEAD</c>, the current
+    /// branch's ref and <c>packed-refs</c> for the repository root of every known solution. Safe to call again: a HEAD
+    /// already watched is skipped.
+    /// </summary>
+    private void WatchWorktreeHeads()
+    {
+        if (this._watcher is null)
+        {
+            return;
+        }
+
+        foreach (string root in workspaces.KnownSolutions.Select(s => git.FindRepositoryRoot(s)).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            this._watcher.WatchWorktreeHead(root);
+        }
+    }
+
+    /// <summary>The commit HEAD points at for the repository a solution lives in, or null (no repository, no git).</summary>
+    private async Task<string?> ReadHeadAsync(string solutionPath, CancellationToken ct)
+    {
+        string? root = git.FindRepositoryRoot(solutionPath);
+        return root is null ? null : await git.GetHeadAsync(root, ct).ConfigureAwait(false);
+    }
+
+    private void RecordHead(string solutionPath, string? head)
+    {
+        if (head is not null)
+        {
+            workspaces.RecordIndexedHead(solutionPath, head);
+        }
+    }
+
+    /// <summary>Queues the refresh of unloaded solutions after a git change, to run now instead of at the next interval.</summary>
+    private void RefreshUnloadedNow(IEnumerable<string> solutionPaths)
+    {
+        foreach (string solution in solutionPaths.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (workspaces.TryGetLoaded(solution, out _))
+            {
+                continue;
+            }
+
+            lock (this._immediateQueued)
+            {
+                if (!this._immediateQueued.Add(solution))
+                {
+                    continue;
+                }
+            }
+
+            activity.RefreshStarted();
+            this._immediateRefreshes.Writer.TryWrite(solution);
+        }
+    }
+
+    private async Task RunImmediateRefreshAsync(CancellationToken ct)
+    {
+        try
+        {
+            await foreach (string path in this._immediateRefreshes.Reader.ReadAllAsync(ct).ConfigureAwait(false))
+            {
+                // Taken off the queued set before the work starts, so a git change that lands meanwhile queues another pass.
+                lock (this._immediateQueued)
+                {
+                    this._immediateQueued.Remove(path);
+                }
+
+                try
+                {
+                    await this.WarmSolutionAsync(path, "Git refresh", ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Git refresh of {Solution} failed", SolutionDiscovery.SolutionName(path));
+                }
+                finally
+                {
+                    activity.RefreshFinished();
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
     }
 
     private enum WarmOutcome
@@ -118,6 +222,29 @@ public sealed class IndexingHostedService(
         AlreadyLoaded,
         Fresh,
         Indexed,
+        Forgotten,
+    }
+
+    /// <summary>
+    /// Looks for known solutions whose file is gone (one <c>File.Exists</c> per known solution) and queues the forgetting
+    /// for the consumer, so it can not race a running index job.
+    /// </summary>
+    private async Task RunDiscoverySweepAsync(TimeSpan every, CancellationToken ct)
+    {
+        using PeriodicTimer timer = new(every);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
+            {
+                if (workspaces.HasMissingSolutions())
+                {
+                    _ = jobs.Enqueue(new ForgetMissingJob());
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
     }
 
     /// <summary>
@@ -128,23 +255,45 @@ public sealed class IndexingHostedService(
     private async Task<WarmOutcome> WarmSolutionAsync(string path, string reason, CancellationToken ct)
     {
         string name = SolutionDiscovery.SolutionName(path);
+        if (!workspaces.IsKnown(path))
+        {
+            return WarmOutcome.Forgotten;
+        }
+
         if (workspaces.TryGetLoaded(path, out _))
         {
             return WarmOutcome.AlreadyLoaded;
         }
 
+        // Read before the freshness check: a checkout that lands meanwhile moves HEAD again and raises its own git event.
+        string? head = await this.ReadHeadAsync(path, ct).ConfigureAwait(false);
         if (IndexFreshness.IsFresh(index, path, filter))
         {
+            this.RecordHead(path, head);
             logger.LogInformation("{Reason}: {Solution} index is fresh, not loading", reason, name);
             return WarmOutcome.Fresh;
         }
 
         DateTime started = DateTime.UtcNow;
-        LoadedSolution loaded = await workspaces.GetOrLoadAsync(path, ct).ConfigureAwait(false);
+        LoadedSolution loaded;
+        try
+        {
+            loaded = await workspaces.GetOrLoadAsync(path, ct).ConfigureAwait(false);
+        }
+        catch (Exception) when (!ct.IsCancellationRequested && !workspaces.IsKnown(path))
+        {
+            return WarmOutcome.Forgotten;
+        }
+
         Task indexed = this._loadIndexing.TryGetValue(loaded.SolutionPath, out Task? queuedByLoad)
             ? queuedByLoad
             : jobs.Enqueue(new IndexSolutionJob(loaded.SolutionPath, Force: false));
         await indexed.WaitAsync(ct).ConfigureAwait(false);
+        if (!workspaces.IsKnown(path))
+        {
+            return WarmOutcome.Forgotten;
+        }
+
         bool evicted = workspaces.Evict(path);
         logger.LogInformation(
             "{Reason}: {Solution} indexed ({Projects} projects) in {Seconds:N1}s{Kept}",
@@ -299,20 +448,42 @@ public sealed class IndexingHostedService(
             case IndexSolutionJob indexJob:
                 if (workspaces.TryGetLoaded(indexJob.SolutionPath, out LoadedSolution loaded))
                 {
+                    string? head = await this.ReadHeadAsync(indexJob.SolutionPath, ct).ConfigureAwait(false);
                     await indexer.IndexSolutionAsync(loaded, indexJob.Force, ct).ConfigureAwait(false);
+                    this.DropRowsIfForgotten(indexJob.SolutionPath);
+                    this.RecordHead(indexJob.SolutionPath, head);
                 }
 
                 break;
 
             case FileChangesJob changes:
-                await this.ProcessFileChangesAsync(changes.Paths, ct).ConfigureAwait(false);
+                await this.ProcessFileChangesAsync(changes.Paths, changes.CreatedPaths, changes.CreatedDirectories, ct).ConfigureAwait(false);
+                break;
+
+            case ForgetSolutionJob forget:
+                try
+                {
+                    forget.Result.TrySetResult(workspaces.Forget(forget.Hint));
+                }
+                catch (Exception ex)
+                {
+                    forget.Result.TrySetException(ex);
+                    throw;
+                }
+
+                break;
+
+            case ForgetMissingJob:
+                workspaces.ForgetMissing();
                 break;
 
             case FullReconcileJob:
-                foreach (LoadedSolution l in workspaces.Loaded)
-                {
-                    await this.ReconcileAsync(l, ct).ConfigureAwait(false);
-                }
+                // The watcher lost events: vanished solutions are forgotten and new ones (a copied repository creates
+                // many files at once, which is what overflows) are found by a fresh scan of the roots.
+                workspaces.ForgetMissing();
+                workspaces.Rediscover(options.Value.Roots);
+                this.WatchWorktreeHeads();
+                _ = await this.ReconcileOrReloadLoadedAsync(ct).ConfigureAwait(false);
 
                 // The watcher lost events; anything unloaded may have changed too. The freshness check makes an unneeded refresh cheap.
                 this.RecordUnloadedChanges(workspaces.KnownSolutions, []);
@@ -324,41 +495,93 @@ public sealed class IndexingHostedService(
         }
     }
 
-    private async Task ProcessFileChangesAsync(IReadOnlyCollection<string> paths, CancellationToken ct)
+    /// <summary>
+    /// For a batch that may have changed anything (a git change, lost watcher events): a loaded solution whose project
+    /// files differ from what they were at its load is reloaded, the others are reconciled with the disk.
+    /// Returns the solutions that were reloaded.
+    /// </summary>
+    private async Task<HashSet<string>> ReconcileOrReloadLoadedAsync(CancellationToken ct)
     {
+        HashSet<string> reloaded = new(StringComparer.OrdinalIgnoreCase);
+        foreach (LoadedSolution l in workspaces.Loaded)
+        {
+            IReadOnlyList<string> changedProjectFiles = l.ChangedProjectFiles();
+            if (changedProjectFiles.Count > 0)
+            {
+                reloaded.Add(l.SolutionPath);
+                await this.ReloadAsync(new ReloadSolutionJob(l.SolutionPath, changedProjectFiles), ct).ConfigureAwait(false);
+            }
+            else
+            {
+                await this.ReconcileAsync(l, ct).ConfigureAwait(false);
+            }
+        }
+
+        return reloaded;
+    }
+
+    /// <summary>
+    /// The consumer runs every forget, so a solution forgotten while its index job was running (or queued behind it)
+    /// would otherwise get its rows back from that job. Called after each job that writes rows for one solution.
+    /// </summary>
+    private void DropRowsIfForgotten(string solutionPath)
+    {
+        if (!workspaces.IsKnown(solutionPath))
+        {
+            index.DeleteSolution(solutionPath);
+        }
+    }
+
+    private async Task ProcessFileChangesAsync(IReadOnlyCollection<string> paths, IReadOnlyCollection<string>? createdPaths, IReadOnlyCollection<string>? createdDirectories, CancellationToken ct)
+    {
+        // A deleted folder may arrive as a single event or none; any batch is a chance to notice vanished solution files.
+        workspaces.ForgetMissing();
+
         List<(string Path, ChangeKind Kind)> classified = paths
             .Select(p => (p, ChangeClassifier.Classify(p, options.Value.IgnoredFolders)))
             .Where(x => x.Item2 != ChangeKind.Ignored)
             .ToList();
+
+        // New solutions are registered only: no load, no warm-up, and their own file is not a change to refresh.
+        List<string> appeared = workspaces.RegisterAppearedIn(createdDirectories ?? [], options.Value.Roots).ToList();
+        appeared.AddRange(workspaces.RegisterAppeared(
+            classified.Where(c => c.Kind == ChangeKind.SolutionFile).Select(c => c.Path), createdPaths, options.Value.Roots));
+        if (appeared.Count > 0)
+        {
+            this.WatchWorktreeHeads();
+            classified = classified.Where(c => !appeared.Contains(c.Path, StringComparer.OrdinalIgnoreCase)).ToList();
+        }
+
         if (classified.Count == 0)
         {
             return;
         }
 
-        // A checkout touches HEAD and many files at once: one reconcile covers all of it.
+        // A checkout touches HEAD and many files at once: one reconcile (or a reload, where project files changed) covers
+        // all of it for the loaded solutions. The rest of the batch is still looked at below for what the checkout did not cover.
         List<string> heads = classified.Where(c => c.Kind == ChangeKind.Git).Select(c => c.Path).ToList();
+        HashSet<string> reloaded = new(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> covered = new(StringComparer.OrdinalIgnoreCase);
         if (heads.Count > 0)
         {
             logger.LogInformation("Git HEAD changed; reconciling {Count} loaded solutions", workspaces.Loaded.Count);
-            foreach (LoadedSolution l in workspaces.Loaded)
-            {
-                await this.ReconcileAsync(l, ct).ConfigureAwait(false);
-            }
+            covered.UnionWith(workspaces.Loaded.Select(l => l.SolutionPath));
+            reloaded = await this.ReconcileOrReloadLoadedAsync(ct).ConfigureAwait(false);
 
             foreach (string head in heads)
             {
-                this.RecordUnloadedChanges(this.SolutionsUnderRepository(head), [head]);
+                List<string> inRepository = this.SolutionsUnderRepository(head).ToList();
+                this.RecordUnloadedChanges(inRepository, [head]);
+                this.RefreshUnloadedNow(inRepository);
             }
-
-            return;
         }
 
-        HashSet<string> reloaded = new(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> reloadedByGit = new(reloaded, StringComparer.OrdinalIgnoreCase);
         foreach (IGrouping<string?, (string Path, ChangeKind Kind)> group in classified
                      .Where(c => c.Kind is ChangeKind.ProjectFile or ChangeKind.SolutionFile)
                      .GroupBy(c => workspaces.FindSolutionForPath(c.Path), StringComparer.OrdinalIgnoreCase))
         {
-            if (group.Key is null)
+            if (group.Key is null || reloadedByGit.Contains(group.Key))
             {
                 continue;
             }
@@ -377,7 +600,7 @@ public sealed class IndexingHostedService(
                      .Where(c => c.Kind == ChangeKind.Source)
                      .GroupBy(c => workspaces.FindSolutionForPath(c.Path), StringComparer.OrdinalIgnoreCase))
         {
-            if (group.Key is null || reloaded.Contains(group.Key))
+            if (group.Key is null || reloaded.Contains(group.Key) || covered.Contains(group.Key))
             {
                 continue;
             }
@@ -442,6 +665,11 @@ public sealed class IndexingHostedService(
 
     private async Task ReloadAsync(ReloadSolutionJob reload, CancellationToken ct)
     {
+        if (!workspaces.IsKnown(reload.SolutionPath))
+        {
+            return;
+        }
+
         if (options.Value.RestoreOnProjectChange)
         {
             foreach (string projectFile in reload.ChangedProjectFiles.Where(p => p.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) && File.Exists(p)))
@@ -452,13 +680,16 @@ public sealed class IndexingHostedService(
         }
 
         logger.LogInformation("Reloading {Solution} after project file changes", SolutionDiscovery.SolutionName(reload.SolutionPath));
+        string? head = await this.ReadHeadAsync(reload.SolutionPath, ct).ConfigureAwait(false);
         await workspaces.ReloadAsync(reload.SolutionPath, ct).ConfigureAwait(false);
+        this.RecordHead(reload.SolutionPath, head);
     }
 
     /// <summary>Compares every document of a loaded solution with the disk and applies the differences, then indexes.</summary>
     private async Task ReconcileAsync(LoadedSolution loaded, CancellationToken ct)
     {
         DateTime started = DateTime.UtcNow;
+        string? head = await this.ReadHeadAsync(loaded.SolutionPath, ct).ConfigureAwait(false);
         Solution solution = loaded.Solution;
         List<DocumentId> changed = [];
         HashSet<ProjectId> surfaceChanged = [];
@@ -529,6 +760,8 @@ public sealed class IndexingHostedService(
         IncrementalIndexReport report = await indexer.IndexDocumentsAsync(loaded, changed, ct).ConfigureAwait(false);
         surfaceChanged.UnionWith(report.SurfaceChangedProjects);
         await indexer.IndexSolutionAsync(loaded, force: false, ct).ConfigureAwait(false);
+        this.DropRowsIfForgotten(loaded.SolutionPath);
+        this.RecordHead(loaded.SolutionPath, head);
         logger.LogInformation(
             "Reconciled {Solution}: {Updated} updated, {Added} added, {Removed} removed, {Extracted} extracted in {Seconds:N1}s",
             loaded.Name, updated, added, removed, report.DocumentsExtracted, (DateTime.UtcNow - started).TotalSeconds);

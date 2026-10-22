@@ -7,9 +7,10 @@ namespace Balalaika.Workspace;
 /// <summary>
 /// One edge of the call graph: the symbol on the other end, where the call is written, and the document that declares
 /// the other end (the calling member for a caller, the callee for a callee; null for a metadata callee). The document
-/// names the project the <c>scope</c> filter is applied to.
+/// names the project the <c>scope</c> filter is applied to. A caller that reaches the member through a base or interface
+/// member is not direct; <paramref name="ViaMember"/> is the member the call is written against (null when direct).
 /// </summary>
-public sealed record CallSite(ISymbol Symbol, Location Location, Document? Document);
+public sealed record CallSite(ISymbol Symbol, Location Location, Document? Document, bool IsDirect = true, ISymbol? ViaMember = null);
 
 /// <summary>
 /// One level of callers (via <see cref="SymbolFinder.FindCallersAsync(ISymbol, Solution, CancellationToken)"/>) and
@@ -26,7 +27,8 @@ public static class CallGraph
             {
                 if (location.IsInSource)
                 {
-                    result.Add(new CallSite(caller.CallingSymbol, location, solution.GetDocument(location.SourceTree)));
+                    ISymbol? via = !caller.IsDirect && !SymbolEqualityComparer.Default.Equals(caller.CalledSymbol, symbol) ? caller.CalledSymbol : null;
+                    result.Add(new CallSite(caller.CallingSymbol, location, solution.GetDocument(location.SourceTree), caller.IsDirect, via));
                 }
             }
         }

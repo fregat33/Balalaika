@@ -3,6 +3,54 @@
 All tools are exposed over MCP at `http://localhost:5301/mcp`. Every result is plain text designed to be read by an
 agent: one hit per line, `path:line:col` first so it is clickable, no code snippets.
 
+## Parts: a per-request view over worktrees
+
+Solutions inside **linked git worktrees** (a directory whose `.git` is a file pointing into the `worktrees` folder of
+another repository's git directory, as `git worktree add` makes) are private. A request sees:
+
+| Request | Visible solutions |
+|---|---|
+| `/mcp` (no `part`) | base checkouts and every solution that is not in a linked worktree; no worktree |
+| `/mcp?part=<worktree dir>` | that worktree's solutions **instead of** the base checkout of the same repository; other repositories' base checkouts; no other worktree |
+| `/mcp?part=<a>&part=<b>` | the same for each part (one part per repository) |
+
+`part` is the worktree's root directory (the one holding `.git`), repeatable. Solutions of a part are listed and searched
+first. The view is built per request from the query string and travels with the call only (an `AsyncLocal` set by the
+MCP call filter); concurrent requests with different parts never share it. `GET /health?part=...` takes the same
+parameter. Privacy is read from the `.git` entry of the solution's directory tree (the git directory differs from the
+common git directory) and cached per solution.
+
+Errors (a tool error result, `/health` answers 400; nothing else runs):
+
+- `Unknown part: <path>`: not the root of a linked worktree that holds a known solution under the roots (a main checkout is not one).
+- `Two parts of one repository: <a>, <b>`: both worktrees belong to the same repository.
+
+What the view covers: the known-solution list, loaded-solution iteration, name/path resolution of `solution` hints, the
+owner lookup for a file path, and every index query (`find_references`, `find_implementations`, `get_outline`
+fallback, `search_symbols`, symbol lookup by name or doc id, package drift and consumers, tree lookups) through a
+`solution_path NOT IN (...)` exclusion. A solution outside the view is *unknown* for that request: a path inside it
+reports `not under any known solution` (`go_to_definition`) or `is not part of <solution>` (`get_outline`, which falls
+back to the first visible solution), a hint naming it gives `Unknown solution: ...` where the tool checks the hint
+(`review_changes`, `reindex`, `load_solution`, `forget_solution`), and `load_solution` with its path neither adds it to the
+view nor registers anything. `find_references` and the other symbol tools ignore a hint that matches nothing visible, as
+they always did, and resolve among the visible solutions.
+
+| Tool | View applies |
+|---|---|
+| `find_references`, `find_implementations`, `find_derived_types`, `get_call_graph` | yes: live solutions, twins in other solutions and the index groups |
+| `go_to_definition`, `get_symbol_info`, `list_members`, `get_outline`, `get_diagnostics` | yes: symbol/hint/path resolution |
+| `review_changes` | yes: the `solution` hint resolves among visible solutions |
+| `search_symbols` | yes |
+| `package_drift` | yes: consumers and sources in hidden solutions are left out |
+| `reindex` | yes: `all` means the visible loaded solutions; a hint among the visible ones |
+| `load_solution` | yes: never registers or loads a hidden solution |
+| `forget_solution` | yes: the hint resolves among visible solutions only |
+| `status`, `/health` | yes: lists only visible solutions (index statistics and job counts stay global) |
+| `next_page` | no: a cursor replays what the original call produced |
+
+Cost note: background work (`PropagateSurfaceChangesAsync`, watchers, warm-up) is not part of any request and covers
+every known solution, so each loaded worktree adds to the cost of a surface change; `IdleEvictionMinutes` is 0 by default.
+
 ## Symbol specs
 
 Every tool that takes a symbol accepts these forms, tried in this order inside each compilation:
@@ -36,12 +84,21 @@ and the query is not re-run.
 Returns the next page of the same list under a `Continued: <label>` header, with a fresh cursor if more remain. The
 page is as long as the original call's `limit` unless `limit` is given, which then also sizes the pages after it.
 
+## What a count means
+
+References count usages that bind to the declaration itself: a call through `IShape.Area()` is a reference of
+`IShape.Area()`, not of the `Square.Area()` that implements it (the family of an interface or base member is
+`find_implementations`). `find_references`, its index groups and the impact lines of `review_changes` follow this one
+rule. Callers keep dispatch through base and interface members, because that call does run the member: they are
+counted apart from direct callers and tagged `via <member>`, and `direct = true` gives the symbol's own callers only.
+
 ## Query tools (read-only)
 
 ### `find_references(symbol, solution?, allSolutions = true, kind?, scope = "all", limit = 200)`
 
 Header with signature, kind, doc id, assembly, and declaration location. Then one block per solution:
-`Live <name>: N references` for loaded solutions (exact, via `SymbolFinder`), `Index <name>: N references (solution
+`Live <name>: N references` for loaded solutions (`SymbolFinder`, keeping the usages that bind to the declaration
+itself), `Index <name>: N references (solution
 not loaded; from index)` for the rest, with `[stale]` on hits whose file changed since indexing. Footer `Total: N`.
 
 `kind` keeps only the listed usage kinds (`creation`, or several as `creation,base`); `scope` keeps `production`
@@ -136,7 +193,7 @@ Total: 7 declarations
   nesting from the containing doc id, `[stale]` when the file changed since indexing. A file nobody indexed yet loads
   its solution first. The list goes through the pager, so a long file ends with a `next_page` cursor.
 
-### `get_call_graph(symbol, solution?, direction = "both", includeExternal = false, scope = "all", limit = 100)`
+### `get_call_graph(symbol, solution?, direction = "both", includeExternal = false, scope = "all", direct = false, limit = 100)`
 
 One level in each direction for a method, constructor, property or event (types are rejected with a hint).
 `Callers` come from `SymbolFinder.FindCallersAsync` in the defining solution and in every other loaded solution
@@ -150,6 +207,12 @@ printed `path:line:col` back as `symbol` to walk a further level. `direction` is
 member's project for callers, the callee's declaring project for callees (a metadata callee has no project and counts
 as production). The same test-project rule as `find_references` applies, and the list headers read
 `Callers (3 of 12, scope=tests, live, loaded solutions only):`.
+
+Callers include calls dispatched through a base or interface member of the symbol. Such a row ends in
+`  via Ns.IShape.Area()`, and the header counts them apart: `Callers (7: 3 direct, 4 via base or interface members,
+live, loaded solutions only):` (with a filter, `Callers (3 of 12: 1 direct, 2 via base or interface members,
+scope=tests, live, loaded solutions only):`). A header without via rows is unchanged. `direct = true` drops the via
+rows, leaving the symbol's own callers.
 
 ### `get_diagnostics(target, solution?, minSeverity = "warning", limit = 200)`
 
@@ -215,7 +278,9 @@ Total: 9 source files, 14 changed declarations (3 surface, 11 body-only or priva
   references the old overload had. Body-only changes of methods, constructors, properties and events print their
   one-level caller count, except in test projects, where nothing in production calls them and the runner's reflection
   is invisible. Every reference and caller count splits into its halves when a test project is involved,
-  `callers: 25 (2 production, 23 tests)`, so the risk reads off the line. An added interface or abstract class prints `implementations:` or `derived types:` per
+  `callers: 25 (2 production, 23 tests)`, so the risk reads off the line. Callers dispatched through a base or
+  interface member are split off too, parts joined by `; `: `callers: 3 (1 direct, 2 via base or interface members)`,
+  `callers: 7 (3 direct, 4 via base or interface members; 2 production, 5 tests)`. An added interface or abstract class prints `implementations:` or `derived types:` per
   solution (the `find_implementations` lookups), and a member added to an interface or an abstract member prints
   `implementations:` or `overrides:` even when zero, since every implementer elsewhere has to add it. Other
   additions and private declarations print no impact.
@@ -278,13 +343,29 @@ reason a cross-repository lookup comes back empty.
 ### `load_solution(solution)`
 
 Starts or joins a load and waits up to `LoadWaitSeconds`. Reports project count, load time and the number of workspace
-diagnostics.
+diagnostics. `solution` may be a known name or path, or the full path of an existing `.sln` / `.slnx` that is not known
+yet (inside the roots or not); that file is registered first. A missing path or another extension answers
+`Unknown solution: ...`.
+
+### `forget_solution(solution)`
+
+Removes a solution from the known list: unloads it (even if pinned), drops its pending refresh and deletes its project
+rows (and with them blobs, symbols, references, relations) from the index. Answers
+`Forgot Acme.Orders (C:\src\acme\Acme.Orders\Acme.Orders.sln): 4 projects removed from the index.`; an unknown name
+answers `Unknown solution: ...`. Annotated destructive. If the solution file still exists it stays forgotten until
+`load_solution` is called with its full path, a create or rename event for the file arrives, or the server restarts.
+Solutions whose file disappears are forgotten automatically, and `*.sln` / `*.slnx` files that appear under a root are
+registered automatically (see "Runtime discovery" in `indexing-and-invalidation.md`).
 
 ### `status()`
 
 Working set and GC heap, index path and row counts, pending jobs and the last completed job, and every known
 solution with its state (`unloaded`, `loading`, `loaded`, `failed`), pin flag, project and document counts, load time
-and last-used time. A `Warm-up:` line shows the startup warm-up progress (`2 of 3 done, loading X`, then
+and last-used time. The line after `Jobs:` is the readiness signal: `Ready: yes`, or `Ready: no (<n> jobs, <m> buffered)`
+where `n` counts queued and running index jobs (plus unloaded refreshes started by a git change) and `m` the file events
+the watcher still holds back in its debounce window. After a branch switch, wait for `Ready: yes` before querying. Each
+solution line ends with `head <7 chars>` (the git commit its index was last brought in line with) and then the path;
+`head -` means unknown (not yet checked since startup, or no repository). A `Warm-up:` line shows the startup warm-up progress (`2 of 3 done, loading X`, then
 `done, N warmed, M already fresh`) when it is enabled and there are solutions beyond the preloads. An
 `Unloaded refresh:` line lists solutions with changes waiting for a refresh (`X (3 files, last change 42s ago)`) and
 how many refreshes ran. The same text is served at `GET /health`.

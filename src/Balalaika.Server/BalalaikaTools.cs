@@ -17,7 +17,8 @@ public sealed class BalalaikaTools(QueryService query)
         "Solution name (file name without extension) to resolve the symbol in. Defaults to loaded solutions, then the configured default.";
 
     [McpServerTool(Name = "find_references", ReadOnly = true), Description(
-        "Find every usage of a symbol. Live Roslyn results for loaded solutions, index results for the rest. " +
+        "Find every usage that binds to the symbol's own declaration (not calls through the interface or base member it implements or overrides; " +
+        "see get_call_graph for those, find_implementations for the family). Live Roslyn results for loaded solutions, index results for the rest. " +
         "Returns one 'path:line:col  project  kind  in Type.Member' line per hit: kind is usage, invocation, creation, base or attribute, " +
         "and 'in' names the enclosing member or type, so a handler, a sender and a test are told apart without opening the file. " +
         "Filter with kind (who instantiates, derives, applies, calls) and scope (production or tests); group lines then read 'N of M references'.")]
@@ -110,7 +111,8 @@ public sealed class BalalaikaTools(QueryService query)
 
     [McpServerTool(Name = "get_call_graph", ReadOnly = true), Description(
         "One level of callers and callees of a method, constructor, property or event. Callers come from SymbolFinder across " +
-        "loaded solutions; callees are the invocations and object creations in the symbol's own body. " +
+        "loaded solutions and keep calls dispatched through a base or interface member, tagged 'via <member>' and counted apart " +
+        "from direct callers (direct=true drops them); callees are the invocations and object creations in the symbol's own body. " +
         "Lines are 'Ns.Type.Member  path:line:col'; pass a line back as the symbol to walk further.")]
     public Task<string> GetCallGraph(
         [Description(SymbolHelp)] string symbol,
@@ -118,10 +120,11 @@ public sealed class BalalaikaTools(QueryService query)
         [Description("both (default), callers or callees.")] string direction = "both",
         [Description("Include callees declared in framework or NuGet assemblies.")] bool includeExternal = false,
         [Description("all (default), production or tests: keep callers declared in, and callees declared in, production or test projects only. A metadata callee counts as production.")] string scope = "all",
+        [Description("Callers that call the symbol itself only; drops calls made through a base or interface member (default false).")] bool direct = false,
         [Description("Maximum lines per list; the rest is reachable with next_page.")] int limit = 100,
         CancellationToken cancellationToken = default)
     {
-        return query.GetCallGraphAsync(symbol, solution, direction, includeExternal, scope, limit, cancellationToken);
+        return query.GetCallGraphAsync(symbol, solution, direction, includeExternal, scope, direct, limit, cancellationToken);
     }
 
     [McpServerTool(Name = "review_changes", ReadOnly = true), Description(
@@ -191,12 +194,21 @@ public sealed class BalalaikaTools(QueryService query)
     }
 
     [McpServerTool(Name = "load_solution", Idempotent = true), Description(
-        "Load a solution into memory so that live queries and diagnostics are available for it.")]
+        "Load a solution into memory so that live queries and diagnostics are available for it. A full path to an existing .sln / .slnx that is not known yet registers it first.")]
     public Task<string> LoadSolution(
-        [Description("Solution name or path.")] string solution,
+        [Description("Solution name, or full path of a .sln / .slnx file.")] string solution,
         CancellationToken cancellationToken = default)
     {
         return query.LoadSolutionAsync(solution, cancellationToken);
+    }
+
+    [McpServerTool(Name = "forget_solution", Destructive = true, Idempotent = true), Description(
+        "Remove a solution from the known list: unload it (even if pinned) and delete its rows from the index. A solution whose file still exists stays forgotten until load_solution is called with its full path, the file is created or renamed again, or the server restarts.")]
+    public Task<string> ForgetSolution(
+        [Description("Solution name or full path.")] string solution,
+        CancellationToken cancellationToken = default)
+    {
+        return query.ForgetSolutionAsync(solution, cancellationToken);
     }
 
     [McpServerTool(Name = "status", ReadOnly = true), Description(

@@ -46,6 +46,7 @@ builder.Host.UseSerilog((context, services, configuration) =>
 builder.Services.AddSingleton(sp => new IndexStore(sp.GetRequiredService<IOptions<BalalaikaOptions>>().Value.ResolveIndexPath()));
 builder.Services.AddSingleton(sp => new SourceFilter(sp.GetRequiredService<IOptions<BalalaikaOptions>>().Value.IgnoredFolders));
 builder.Services.AddSingleton<IndexJobQueue>();
+builder.Services.AddSingleton<IndexActivity>();
 builder.Services.AddSingleton<WarmUpTracker>();
 builder.Services.AddSingleton<PendingRefreshes>();
 builder.Services.AddSingleton<WorkspaceManager>();
@@ -54,6 +55,7 @@ builder.Services.AddSingleton<SymbolResolver>();
 builder.Services.AddSingleton<ResultPager>();
 builder.Services.AddSingleton<IBaseContentProvider, GitRepository>();
 builder.Services.AddSingleton<QueryService>();
+builder.Services.AddHttpContextAccessor();
 builder.Services.AddHostedService<IndexingHostedService>();
 
 // Assigned once the host is built; the filter below runs only after that.
@@ -65,6 +67,13 @@ builder.Services
     .WithTools<BalalaikaTools>()
     .WithRequestFilters(filters => filters.AddCallToolFilter(next => async (request, cancellationToken) =>
     {
+        // The view of this call: the solutions the request's 'part' parameters leave visible. It follows the async flow
+        // into the tool and everything it awaits; nothing else holds it.
+        if (RequestView.Apply(request.Services, request.Services!.GetRequiredService<WorkspaceManager>()) is { } viewError)
+        {
+            return new CallToolResult { IsError = true, Content = [new TextContentBlock { Text = viewError }] };
+        }
+
         // The SDK rejects a call with a missing required argument before the tool runs and tells the client only
         // "An error occurred invoking 'tool'". When the mistake is unambiguous (one unknown name sent, one required
         // name missing, typically 'query' for 'pattern' or 'file' for 'target') rename the argument and run the call;
@@ -96,7 +105,8 @@ WebApplication app = builder.Build();
 toolCallLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Balalaika.Server.ToolCalls");
 
 app.MapMcp("/mcp");
-app.MapGet("/health", (QueryService query) => Results.Text(query.Status()));
+app.MapGet("/health", (HttpContext http, WorkspaceManager workspaces, QueryService query) =>
+    RequestView.Apply(http, workspaces) is { } viewError ? Results.Text(viewError, statusCode: 400) : Results.Text(query.Status()));
 
 app.Logger.LogInformation(
     "balalaika listening on http://localhost:{Port}/mcp, logging to {LogDirectory}",
@@ -116,3 +126,6 @@ finally
 {
     Log.CloseAndFlush();
 }
+
+/// <summary>Lets the test project start the real server in memory.</summary>
+public partial class Program;

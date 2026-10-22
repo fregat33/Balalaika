@@ -44,6 +44,12 @@ public interface IBaseContentProvider
     /// <summary>The change set, or the error text when <paramref name="baseRef"/> is unknown or the command failed.</summary>
     Task<(ChangeSet? Changes, string? Error)> GetChangesAsync(string repositoryRoot, string baseRef, CancellationToken cancellationToken);
 
+    /// <summary>The full commit id <c>HEAD</c> points at in <paramref name="repositoryRoot"/>, or null when git can not tell (no commit yet, git missing).</summary>
+    Task<string?> GetHeadAsync(string repositoryRoot, CancellationToken cancellationToken)
+    {
+        return Task.FromResult<string?>(null);
+    }
+
     /// <summary>Branch names tried in order by <see cref="FindDefaultBaseAsync"/> when <c>origin/HEAD</c> is not set.</summary>
     static readonly string[] DefaultBaseCandidates = ["main", "master", "develop", "dev"];
 
@@ -153,6 +159,19 @@ public sealed class GitRepository(IOptions<BalalaikaOptions> options, ILogger<Gi
         }
 
         return (new ChangeSet(repositoryRoot, mergeBase, files), null);
+    }
+
+    public async Task<string?> GetHeadAsync(string repositoryRoot, CancellationToken cancellationToken)
+    {
+        try
+        {
+            (int exit, string output, _) = await this.RunAsync(repositoryRoot, ["rev-parse", "HEAD"], cancellationToken).ConfigureAwait(false);
+            return exit == 0 && output.Trim() is { Length: > 0 } head ? head : null;
+        }
+        catch (Exception ex) when (ex is Win32Exception or FileNotFoundException or InvalidOperationException or DirectoryNotFoundException)
+        {
+            return null;
+        }
     }
 
     public async Task<string?> GetBaseTextAsync(string repositoryRoot, string mergeBase, string path, CancellationToken cancellationToken)

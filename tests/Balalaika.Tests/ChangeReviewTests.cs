@@ -321,6 +321,17 @@ public sealed class ChangeReviewTests : IDisposable
     }
 
     [Theory]
+    [InlineData(3, 2, 0, "3 (1 direct, 2 via base or interface members)")]
+    [InlineData(7, 4, 5, "7 (3 direct, 4 via base or interface members; 2 production, 5 tests)")]
+    [InlineData(25, 0, 23, "25 (2 production, 23 tests)")]
+    [InlineData(3, 0, 0, "3")]
+    public void SplitCallers_SplitsViaAndTestsJoinedBySemicolon(int total, int via, int tests, string expected)
+    {
+        // Act / Assert
+        ChangeReview.SplitCallers(total, via, tests).Should().Be(expected);
+    }
+
+    [Theory]
     [InlineData("public void Run()", "")]
     [InlineData("public int Count(string name)", "string")]
     [InlineData("public void Go(ref int a, out string b, params int[] rest)", "int, string, int[]")]

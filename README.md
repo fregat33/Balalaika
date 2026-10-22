@@ -113,6 +113,7 @@ empty.
     "WarmUp": true,
     "UnloadedRefreshSeconds": 60,
     "UnloadedRefreshMaxWaitSeconds": 600,
+    "DiscoverySweepSeconds": 30,
     "BlobRetentionDays": 30,
     "DebounceMilliseconds": 500
   }
@@ -128,6 +129,7 @@ empty.
 | `ReextractDependents` | when a change alters a project's public surface, re-extract that project and its dependents so stored references stay correct |
 | `UnloadedRefreshSeconds` | when files change under a solution that is not loaded, refresh its index (load, index, evict) after this many quiet seconds; `0` leaves only the `[stale]` marker |
 | `UnloadedRefreshMaxWaitSeconds` | refresh at the latest this long after the first change even if changes keep arriving |
+| `DiscoverySweepSeconds` | every this many seconds, forget known solutions whose `.sln` / `.slnx` file no longer exists (new ones are found from watcher events); `0` turns the sweep off, the check still runs after every change batch |
 | `DefaultSolution` | used when a query names none |
 | `IdleEvictionMinutes` | unload a non-preloaded solution after this idle time; `0` keeps everything |
 | `LoadWaitSeconds` | how long a query waits for a load before answering from the index only |
@@ -210,7 +212,7 @@ server address.
 | `search_symbols` | symbols by prefix or camel humps |
 | `next_page` | the rest of any truncated list |
 | `package_drift` | consumers on a package version other than the source |
-| `reindex`, `load_solution`, `status` | maintenance |
+| `reindex`, `load_solution`, `forget_solution`, `status` | maintenance |
 
 Every tool accepts a symbol as a doc-comment id, a fully qualified name, a bare name, or a `path:line:col` copied
 from any earlier result. The full reference, with output formats, is in [`docs/tools.md`](docs/tools.md).

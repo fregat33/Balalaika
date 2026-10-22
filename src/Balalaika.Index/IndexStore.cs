@@ -190,7 +190,7 @@ public sealed class IndexStore : IDisposable
         lock (this._gate)
         {
             using SqliteCommand cmd = this._connection.CreateCommand();
-            cmd.CommandText = $"SELECT {ProjectColumns("project")} FROM project ORDER BY path";
+            cmd.CommandText = $"SELECT {ProjectColumns("project")} FROM project WHERE 1 = 1 {ViewContext.ExcludeSql("project.solution_path")} ORDER BY path";
             using SqliteDataReader r = cmd.ExecuteReader();
             List<ProjectRecord> list = [];
             while (r.Read())
@@ -199,6 +199,15 @@ public sealed class IndexStore : IDisposable
             }
 
             return list;
+        }
+    }
+
+    /// <summary>Deletes every project of a solution; blobs, symbols (and their FTS rows), references, relations, tree and package rows cascade. Returns the number of projects removed.</summary>
+    public int DeleteSolution(string solutionPath)
+    {
+        lock (this._gate)
+        {
+            return this.Execute("DELETE FROM project WHERE solution_path = $s", ("$s", solutionPath));
         }
     }
 
@@ -258,7 +267,7 @@ public sealed class IndexStore : IDisposable
                 SELECT {ProjectColumns("c")}, pr.assembly_name, pr.package_id, pr.version
                 FROM package_ref pr
                 JOIN project c ON c.id = pr.project_id
-                WHERE pr.assembly_name = $asm
+                WHERE pr.assembly_name = $asm {ViewContext.ExcludeSql("c.solution_path")}
                 ORDER BY c.solution_path, c.name
                 """;
             cmd.Parameters.AddWithValue("$asm", assemblyName);
@@ -288,7 +297,7 @@ public sealed class IndexStore : IDisposable
                 FROM package_ref pr
                 JOIN project c ON c.id = pr.project_id
                 JOIN project s ON s.assembly_name = pr.assembly_name COLLATE NOCASE AND s.version IS NOT NULL AND s.id <> c.id
-                WHERE pr.version <> s.version COLLATE NOCASE
+                WHERE pr.version <> s.version COLLATE NOCASE {ViewContext.ExcludeSql("c.solution_path")} {ViewContext.ExcludeSql("s.solution_path")}
                 ORDER BY s.assembly_name, s.solution_path, c.solution_path, c.name
                 """;
             using SqliteDataReader r = cmd.ExecuteReader();
@@ -553,7 +562,7 @@ public sealed class IndexStore : IDisposable
                 SELECT {ProjectColumns("p")}, t.content_hash, t.mtime, t.size
                 FROM tree t
                 JOIN project p ON p.id = t.project_id
-                WHERE t.path = $path
+                WHERE t.path = $path {ViewContext.ExcludeSql("p.solution_path")}
                 """;
             cmd.Parameters.AddWithValue("$path", path);
             using SqliteDataReader r = cmd.ExecuteReader();
@@ -652,7 +661,7 @@ public sealed class IndexStore : IDisposable
                 JOIN project p ON p.id = b.project_id
                 LEFT JOIN symbol s ON s.blob_id = r.blob_id AND s.doc_id = r.from_doc_id
                 LEFT JOIN symbol c ON c.blob_id = r.blob_id AND c.doc_id = s.containing_doc_id
-                WHERE r.target_doc_id = $doc {(targetAssembly is null ? "" : "AND r.target_assembly = $asm")} {kindClause}
+                WHERE r.target_doc_id = $doc {(targetAssembly is null ? "" : "AND r.target_assembly = $asm")} {kindClause} {ViewContext.ExcludeSql("p.solution_path")}
                 ORDER BY p.name, t.path, r.line, r.col
                 {(limitInSql ? "LIMIT $limit" : "")}
                 """;
@@ -706,7 +715,7 @@ public sealed class IndexStore : IDisposable
                 JOIN blob b ON b.id = r.blob_id
                 JOIN tree t ON t.project_id = b.project_id AND t.content_hash = b.content_hash
                 JOIN project p ON p.id = b.project_id
-                WHERE r.target_doc_id = $doc {(targetAssembly is null ? "" : "AND r.target_assembly = $asm")}
+                WHERE r.target_doc_id = $doc {(targetAssembly is null ? "" : "AND r.target_assembly = $asm")} {ViewContext.ExcludeSql("p.solution_path")}
                 GROUP BY p.solution_path
                 """;
             cmd.Parameters.AddWithValue("$doc", targetDocId);
@@ -732,13 +741,13 @@ public sealed class IndexStore : IDisposable
         lock (this._gate)
         {
             using SqliteCommand cmd = this._connection.CreateCommand();
-            cmd.CommandText = """
+            cmd.CommandText = $"""
                 SELECT p.name, p.solution_path, t.path, s.doc_id, s.kind, s.name, s.fq_name, s.signature, s.accessibility, s.containing_doc_id, s.line, s.col, s.end_line, t.content_hash
                 FROM tree t
                 JOIN blob b ON b.project_id = t.project_id AND b.content_hash = t.content_hash
                 JOIN project p ON p.id = t.project_id
                 JOIN symbol s ON s.blob_id = b.id
-                WHERE t.path = $path
+                WHERE t.path = $path {ViewContext.ExcludeSql("p.solution_path")}
                 ORDER BY p.name, s.line, s.col
                 """;
             cmd.Parameters.AddWithValue("$path", path);
@@ -769,7 +778,7 @@ public sealed class IndexStore : IDisposable
                 JOIN tree t ON t.project_id = b.project_id AND t.content_hash = b.content_hash
                 JOIN project p ON p.id = b.project_id
                 LEFT JOIN symbol s ON s.blob_id = rel.blob_id AND s.doc_id = rel.from_doc_id
-                WHERE rel.to_doc_id = $doc AND rel.kind IN ({kindList})
+                WHERE rel.to_doc_id = $doc AND rel.kind IN ({kindList}) {ViewContext.ExcludeSql("p.solution_path")}
                 ORDER BY p.name, t.path, s.line
                 LIMIT $limit
                 """;
@@ -865,7 +874,7 @@ public sealed class IndexStore : IDisposable
             JOIN blob b ON b.id = s.blob_id
             JOIN tree t ON t.project_id = b.project_id AND t.content_hash = b.content_hash
             JOIN project p ON p.id = b.project_id
-            WHERE {where}
+            WHERE {where} {ViewContext.ExcludeSql("p.solution_path")}
             ORDER BY CASE s.kind
                 WHEN 'class' THEN 0 WHEN 'interface' THEN 0 WHEN 'record' THEN 0 WHEN 'record struct' THEN 0 WHEN 'struct' THEN 0 WHEN 'enum' THEN 0 WHEN 'delegate' THEN 0
                 WHEN 'method' THEN 0 WHEN 'constructor' THEN 0 WHEN 'operator' THEN 0
@@ -915,7 +924,7 @@ public sealed class IndexStore : IDisposable
                 JOIN blob b ON b.id = s.blob_id
                 JOIN tree t ON t.project_id = b.project_id AND t.content_hash = b.content_hash
                 JOIN project p ON p.id = b.project_id
-                WHERE {where}
+                WHERE {where} {ViewContext.ExcludeSql("p.solution_path")}
                 ORDER BY p.name, t.path, s.line
                 LIMIT $limit
                 """,

@@ -46,6 +46,88 @@ public sealed class LoadedSolution : IDisposable
         this.LoadedAtUtc = DateTime.UtcNow;
         this.LastUsedUtc = this.LoadedAtUtc;
         (this._excludedByProject, this._excluded) = ComputeExcludedSourceFiles(solution);
+        this._projectFileStamps = StampProjectFiles(solutionPath, solution);
+    }
+
+    private static readonly string[] ProjectFileNames =
+    [
+        "Directory.Build.props", "Directory.Build.targets", "Directory.Packages.props", "packages.lock.json", "global.json", "nuget.config",
+    ];
+
+    private readonly Dictionary<string, (long Ticks, long Length)> _projectFileStamps;
+
+    /// <summary>
+    /// The files that decide how MSBuild loads this solution, as they are now but differ from what they were at load:
+    /// the solution file, each project file, the <c>.props</c>/<c>.targets</c> beside a project and the build-wide files
+    /// (<c>Directory.Build.*</c>, <c>Directory.Packages.props</c>, <c>packages.lock.json</c>, <c>global.json</c>,
+    /// <c>nuget.config</c>) in a project directory or above it. A file that appeared or vanished counts.
+    /// </summary>
+    public IReadOnlyList<string> ChangedProjectFiles()
+    {
+        Dictionary<string, (long Ticks, long Length)> now = StampProjectFiles(this.SolutionPath, this.Solution);
+        List<string> changed = [];
+        foreach ((string path, (long, long) stamp) in now)
+        {
+            if (!this._projectFileStamps.TryGetValue(path, out (long, long) before) || before != stamp)
+            {
+                changed.Add(path);
+            }
+        }
+
+        changed.AddRange(this._projectFileStamps.Keys.Where(p => !now.ContainsKey(p)));
+        return changed;
+    }
+
+    private static Dictionary<string, (long Ticks, long Length)> StampProjectFiles(string solutionPath, Solution solution)
+    {
+        HashSet<string> files = new(StringComparer.OrdinalIgnoreCase) { solutionPath };
+        HashSet<string> dirs = new(StringComparer.OrdinalIgnoreCase);
+        foreach (Project project in solution.Projects)
+        {
+            if (project.FilePath is null)
+            {
+                continue;
+            }
+
+            files.Add(project.FilePath);
+            string? dir = Path.GetDirectoryName(project.FilePath);
+            if (dir is not null && Directory.Exists(dir))
+            {
+                foreach (string file in Directory.EnumerateFiles(dir))
+                {
+                    string ext = Path.GetExtension(file);
+                    if (ext.Equals(".props", StringComparison.OrdinalIgnoreCase) || ext.Equals(".targets", StringComparison.OrdinalIgnoreCase))
+                    {
+                        files.Add(file);
+                    }
+                }
+            }
+
+            for (; dir is not null; dir = Path.GetDirectoryName(dir))
+            {
+                dirs.Add(dir);
+            }
+        }
+
+        foreach (string dir in dirs)
+        {
+            foreach (string name in ProjectFileNames)
+            {
+                files.Add(Path.Combine(dir, name));
+            }
+        }
+
+        Dictionary<string, (long Ticks, long Length)> stamps = new(StringComparer.OrdinalIgnoreCase);
+        foreach (string file in files)
+        {
+            FileInfo info = new(file);
+            if (info.Exists)
+            {
+                stamps[file] = (info.LastWriteTimeUtc.Ticks, info.Length);
+            }
+        }
+
+        return stamps;
     }
 
     /// <summary>

@@ -40,7 +40,9 @@ Developers bounce between the same few branches. When `dev` is checked out again
 whose content was seen before already has a blob. The work is:
 
 1. The watcher sees `.git/HEAD` change (and a burst of file events). A batch that contains a `HEAD` change triggers one
-   **full reconcile** of each loaded solution and ignores the individual file events in the same batch.
+   **full reconcile** of each loaded solution instead of handling its source-file events one by one. A loaded solution
+   whose project files differ from what they were when it was loaded is **reloaded** instead (see "Project reload
+   on git and overflow batches" below). Project and solution file events in the same batch are not dropped.
 2. Reconcile stats every document in the solution (mtime and size) against `tree`. Only files that differ are read,
    pushed into the in-memory `Solution` with `WithDocumentText`, and hashed. New `.cs` files under a project directory
    are added; missing ones are removed.
@@ -80,7 +82,7 @@ Blobs no tree row references are deleted at startup once `last_used_at` is older
 | `*.cs` outside `bin/`, `obj/` | Source | apply text to in-memory solution, re-extract if hash is new |
 | `*.csproj`, `*.props`, `*.targets`, `Directory.Packages.props`, `packages.lock.json`, `global.json`, `nuget.config` | ProjectFile | `dotnet restore` the csproj (configurable) and reload the solution |
 | `*.sln`, `*.slnx` | SolutionFile | reload the solution |
-| `.git/HEAD` | Git | full reconcile of loaded solutions |
+| `.git/HEAD`; also the current branch's loose ref and `packed-refs` (reported as `<root>\.git\HEAD`) | Git | full reconcile of loaded solutions |
 | anything else under `.git/`, `bin/`, `obj/`, `node_modules/`, `.vs/`, `TestResults/` | Ignored | dropped before debouncing |
 
 Debounce: 500 ms quiet period, forced flush after about 3 s of continuous activity. A `FileSystemWatcher` buffer
@@ -89,6 +91,40 @@ Overflow notifications go through the same quiet period as ordinary events, so t
 per filled buffer) becomes one batch. As a second guard, `IndexJobQueue` coalesces a `FullReconcileJob` into one that
 is already queued and not yet started; a reconcile that is already running does not absorb new requests, because it may
 have passed the files that changed after it began.
+
+### Linked git worktrees
+
+A linked worktree's `.git` is a **file** (`gitdir: <common>/.git/worktrees/<name>`), and its real `HEAD` lives in that
+directory, outside the watched root, so a checkout in the worktree raises no `.git/HEAD` event. For every known solution
+whose repository root has a `.git` file, the server parses `gitdir:` (absolute or relative to the root) and watches
+`<gitdir>/HEAD` with a second `FileSystemWatcher`. A change is reported as a Git event of the worktree root, as if
+`<root>\.git\HEAD` had changed, so everything keyed on a repository root (the reconcile, the unloaded refresh) works for
+worktrees. Worktrees of solutions registered later (discovery, `load_solution`) are picked up on the next batch.
+
+A symbolic `HEAD` (`ref: refs/heads/<branch>`) does not change when the branch is moved from outside (`git update-ref`
+from the main checkout), so for every repository root, normal or linked, the server also watches the loose ref
+`<common>/refs/heads/<branch>` and `<common>/packed-refs`. `<common>` is the git directory itself for a normal
+repository and the `commondir` of the worktree's git directory (fallback `<gitdir>/../..`) for a linked one. If the ref's
+directory does not exist yet, its nearest existing ancestor is watched until it appears. When `HEAD` changes (a branch
+switch) the ref watchers are re-pointed; a detached `HEAD` has only the `HEAD` watcher. At most three watchers per
+root. Every event of these watchers is reported with the synthetic path `<root>\.git\HEAD`, so the classifier and the
+consumers are unchanged.
+
+### Project reload on git and overflow batches
+
+A solution keeps the last-write time and size of its solution file, its project files, the `.props`/`.targets` beside a
+project and the build-wide files (`Directory.Build.*`, `Directory.Packages.props`, `packages.lock.json`, `global.json`,
+`nuget.config`) in or above a project directory, recorded when it was loaded. On a Git batch and on an overflowed batch
+(`FullReconcileJob`) every loaded solution whose files differ (changed, appeared or vanished) is reloaded, which indexes
+it again; the others are only reconciled. A branch switch that adds a `Compile` item or a `.props` import therefore
+no longer leaves the loaded compilation stale.
+
+### Indexed HEAD
+
+After an `IndexSolutionJob`, a reconcile, a reload and the "index is fresh" branch of the warm-up and refresh, the server
+records `git rev-parse HEAD` of the solution's repository (HEAD is read before the work starts, so a checkout that lands
+meanwhile is not claimed). `status` shows the first 7 characters. It is kept in memory: after a restart it is empty
+until the warm-up has checked the solution.
 
 One query bypasses the debounce on purpose. `get_diagnostics` with a file target reads the file from disk, compares it
 with the live document and applies it to the in-memory solution when they differ (`LiveTextSync`), so a call made in
@@ -181,11 +217,34 @@ dropping them, the consumer records the changed paths per unloaded solution in `
 few seconds and refreshes a solution once it has been quiet for `UnloadedRefreshSeconds` (default 60) or has kept
 changing for `UnloadedRefreshMaxWaitSeconds` (default 600). The refresh is the warm-up step for one solution: skip if
 somebody loaded it meanwhile (its own load indexed it and the normal file-change path now applies), skip if the index
-already matches the disk, otherwise load, index, evict. A `.git/HEAD` change marks every known solution under that
-repository root, since a checkout rewrites files without the solution directory necessarily containing `.git`; a
+already matches the disk, otherwise load, index, evict. A `.git/HEAD` change (also a worktree's, see "Linked git worktrees") marks every known solution under that
+repository root and refreshes the unloaded ones **at once**, without waiting for `UnloadedRefreshSeconds` (also when
+that is 0); the refresh records the solution's HEAD even when the index is fresh. This is needed since a checkout rewrites files without the solution directory necessarily containing `.git`; a
 watcher overflow marks every unloaded solution, which costs only a stat pass per solution when nothing changed. Between
-the change and the refresh, hits keep the `[stale]` marker. `UnloadedRefreshSeconds: 0` disables the refresh and
-restores the marker-only behaviour.
+the change and the refresh, hits keep the `[stale]` marker. `UnloadedRefreshSeconds: 0` turns off only the periodic
+refresh: a `.git/HEAD` change still refreshes the unloaded solutions at once, and hits keep the `[stale]` marker only
+between a file change and that refresh.
+
+### Runtime discovery
+
+Discovery is not limited to startup. A `*.sln` / `*.slnx` created or renamed under a root while the server runs is
+registered from the watcher batch when it qualifies like a startup scan would (depth at most 6 below the root, no
+`bin`, `obj`, `node_modules`, `.git`, `.vs`, `packages` or `TestResults` folder on the way, a `.slnx` yields to a
+same-name `.sln` in its folder; a `.sln` that appears next to a known same-name `.slnx` replaces it). It is only
+registered: not loaded, not warmed, and visible in `status` as `unloaded`. A folder created or moved into a root raises
+no events for its content, so the watcher reports the directory and the consumer scans it (within the depth that is
+left below the root). After a watcher overflow, which is what a repository copy with many files causes, the full
+reconcile scans the roots again and registers every solution that is not known, except those forgotten on purpose.
+
+The reverse is checked on every change batch, on every full reconcile and every `DiscoverySweepSeconds` (default 30,
+`0` turns the sweep off): a known solution whose file no longer exists is forgotten. Forgetting removes it from the
+known and pinned sets, disposes a loaded instance, clears its failure and pending refresh, and deletes its project rows
+from the index. A folder delete may reach the watcher as one directory event or none, which is why the batch check and
+the sweep look at the file instead of relying on per-file delete events. A load that is still running is not awaited
+(that could block on MSBuild); it finishes in the background and discards its result. Queued warm-up, refresh and reload
+work for a forgotten solution is skipped. The `forget_solution` tool does the same on request. Forgetting runs on the
+single index consumer (as a queued job, which the tool awaits), and an index job that finishes for a solution that is no
+longer known deletes the rows it wrote, so a running index can not bring them back.
 
 ## Package version drift
 

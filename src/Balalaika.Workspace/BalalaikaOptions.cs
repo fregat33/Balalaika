@@ -38,6 +38,13 @@ public sealed class BalalaikaOptions
     /// <summary>Refresh an unloaded solution at the latest this many seconds after its first change, even if changes keep arriving.</summary>
     public int UnloadedRefreshMaxWaitSeconds { get; set; } = 600;
 
+    /// <summary>
+    /// Every this many seconds, forget known solutions whose <c>.sln</c> / <c>.slnx</c> file no longer exists (index rows
+    /// included). New solutions are picked up from file-system events, not by this sweep. 0 disables the sweep; the
+    /// same check still runs after every change batch.
+    /// </summary>
+    public int DiscoverySweepSeconds { get; set; } = 30;
+
     /// <summary>Solution used when a query does not name one. Defaults to the first preloaded or discovered solution.</summary>
     public string? DefaultSolution { get; set; }
 

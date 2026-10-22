@@ -534,6 +534,26 @@ public static class ChangeReview
         return tests > 0 ? $"{total} ({total - tests} production, {tests} tests)" : total.ToString();
     }
 
+    /// <summary>
+    /// A caller count with its halves: <c>3 (1 direct, 2 via base or interface members)</c>, <c>25 (2 production, 23 tests)</c>,
+    /// both joined by <c>; </c> when both apply, else just the number.
+    /// </summary>
+    public static string SplitCallers(int total, int via, int tests)
+    {
+        List<string> parts = [];
+        if (via > 0)
+        {
+            parts.Add($"{total - via} direct, {via} via base or interface members");
+        }
+
+        if (tests > 0)
+        {
+            parts.Add($"{total - tests} production, {tests} tests");
+        }
+
+        return parts.Count == 0 ? total.ToString() : $"{total} ({string.Join("; ", parts)})";
+    }
+
     /// <summary>Fully qualified name plus the parameter types for members that have a parameter list, the form <c>SymbolResolver</c> picks an overload by.</summary>
     public static string Spec(SymbolRecord record)
     {

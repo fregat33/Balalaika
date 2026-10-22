@@ -39,6 +39,33 @@ public sealed class IndexStoreTests : IDisposable
     }
 
     [Fact]
+    public void DeleteSolution_RemovesItsProjectsSymbolsAndFtsHits_AndLeavesOtherSolutionsAlone()
+    {
+        // Arrange
+        int a = this._store.EnsureProject(@"C:\x\A\A.csproj", "A", "A", @"C:\x\A.sln");
+        int a2 = this._store.EnsureProject(@"C:\x\A\A2.csproj", "A2", "A2", @"C:\x\A.sln");
+        int b = this._store.EnsureProject(@"C:\x\B\B.csproj", "B", "B", @"C:\x\B.sln");
+        this._store.WriteBlob(a, "ha", new DocumentExtraction([new SymbolRecord("T:Zebra", "class", "Zebra", "Zebra", "class Zebra", "public", null, 1, 1)], [], []));
+        this._store.SetTreeEntry(a, @"C:\x\A\Z.cs", "ha", 1, 1);
+        this._store.WriteBlob(b, "hb", new DocumentExtraction([new SymbolRecord("T:Zebu", "class", "Zebu", "Zebu", "class Zebu", "public", null, 1, 1)], [], []));
+        this._store.SetTreeEntry(b, @"C:\x\B\Z.cs", "hb", 1, 1);
+        this._store.SearchSymbols("Zeb").Should().HaveCount(2);
+
+        // Act
+        int removed = this._store.DeleteSolution(@"C:\X\A.SLN");
+
+        // Assert
+        removed.Should().Be(2);
+        a2.Should().NotBe(a);
+        this._store.GetProjects().Should().ContainSingle().Which.SolutionPath.Should().Be(@"C:\x\B.sln");
+        this._store.GetStats().Symbols.Should().Be(1);
+        this._store.GetStats().Blobs.Should().Be(1);
+        this._store.SearchSymbols("Zebra").Should().BeEmpty();
+        this._store.SearchSymbols("Zeb").Should().ContainSingle().Which.Name.Should().Be("Zebu");
+        this._store.DeleteSolution(@"C:\x\A.sln").Should().Be(0);
+    }
+
+    [Fact]
     public void WriteBlob_WithReplace_OverwritesExistingContent()
     {
         // Arrange
@@ -292,6 +319,69 @@ public sealed class IndexStoreTests : IDisposable
         // Assert
         hits.Should().ContainSingle().Which.Should().BeEquivalentTo(new { ProjectName = "A", FilePath = file, ContentHash = "v2", Symbol = new { DocId = "T:New", Line = 2, EndLine = 9 } });
         this._store.GetFileSymbols(@"C:\x\A\Missing.cs").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void GetProjects_WithViewHidingMixedCasePath_ExcludesThatSolution()
+    {
+        // Arrange
+        this._store.EnsureProject(@"C:\x\Demo\Demo.csproj", "Demo", "Demo", @"C:\x\Demo.sln");
+
+        try
+        {
+            // Act / Assert
+            ViewContext.Current = new ViewContext(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"c:\X\DEMO.SLN" }, new HashSet<string>(), new HashSet<string>());
+            this._store.GetProjects().Should().BeEmpty();
+
+            ViewContext.Current = new ViewContext(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"C:\other\Other.sln" }, new HashSet<string>(), new HashSet<string>());
+            this._store.GetProjects().Should().ContainSingle().Which.SolutionPath.Should().Be(@"C:\x\Demo.sln");
+        }
+        finally
+        {
+            ViewContext.Current = null;
+        }
+    }
+
+    [Fact]
+    public void GetProjects_WithoutView_ReturnsAll_AndViewWithQuoteInPathStillExcludesCaseInsensitively()
+    {
+        // Arrange
+        this._store.EnsureProject(@"C:\x\Demo\Demo.csproj", "Demo", "Demo", @"C:\x\Demo.sln");
+        this._store.EnsureProject(@"C:\x\O\Neil.csproj", "Neil", "Neil", @"C:\x\O'Neil.sln");
+
+        try
+        {
+            // Act / Assert
+            ViewContext.Current = null;
+            this._store.GetProjects().Should().HaveCount(2);
+
+            ViewContext.Current = new ViewContext(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"C:\X\O'NEIL.SLN" }, new HashSet<string>(), new HashSet<string>());
+            this._store.GetProjects().Should().ContainSingle().Which.SolutionPath.Should().Be(@"C:\x\Demo.sln");
+        }
+        finally
+        {
+            ViewContext.Current = null;
+        }
+    }
+
+    [Fact]
+    public void ExcludeSql_EmitsNoCaseFragment_AndDoublesQuotes()
+    {
+        try
+        {
+            ViewContext.Current = null;
+            ViewContext.ExcludeSql("p.solution_path").Should().Be("");
+
+            ViewContext.Current = new ViewContext(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"C:\x\Demo.sln" }, new HashSet<string>(), new HashSet<string>());
+            ViewContext.ExcludeSql("p.solution_path").Should().Be(@" AND p.solution_path COLLATE NOCASE NOT IN ('C:\x\Demo.sln') ");
+
+            ViewContext.Current = new ViewContext(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"C:\x\O'Neil.sln" }, new HashSet<string>(), new HashSet<string>());
+            ViewContext.ExcludeSql("p.solution_path").Should().Contain(@"('C:\x\O''Neil.sln')");
+        }
+        finally
+        {
+            ViewContext.Current = null;
+        }
     }
 
     public void Dispose()
