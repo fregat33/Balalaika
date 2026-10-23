@@ -25,6 +25,9 @@ Errors (a tool error result, `/health` answers 400; nothing else runs):
 - `Unknown part: <path>`: not the root of a linked worktree that holds a known solution under the roots (a main checkout is not one).
 - `Two parts of one repository: <a>, <b>`: both worktrees belong to the same repository.
 
+A `solution` hint that is a full path is compared as a full path, so `/` versus `\` and a trailing separator do not
+matter; the `Known:` list in the `Unknown solution` error still prints names.
+
 What the view covers: the known-solution list, loaded-solution iteration, name/path resolution of `solution` hints, the
 owner lookup for a file path, and every index query (`find_references`, `find_implementations`, `get_outline`
 fallback, `search_symbols`, symbol lookup by name or doc id, package drift and consumers, tree lookups) through a
