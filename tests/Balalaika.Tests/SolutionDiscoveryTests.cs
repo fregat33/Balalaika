@@ -76,6 +76,28 @@ public sealed class SolutionDiscoveryTests : IDisposable
         SolutionDiscovery.QualifiesForDiscovery(Path.Combine(dir, "Other.slnx"), [this._root]).Should().BeTrue();
     }
 
+    // ---------------------------------------------------------------- WorkspaceManager.ResolveSolution
+
+    [Fact]
+    public void ResolveSolution_MatchesAFullPath_WithEitherSeparator()
+    {
+        // Arrange
+        string a = this.MakeSolution("A");
+        this._workspaces.RegisterSolutions([a]);
+        string forward = a.Replace('\\', '/');
+        int lastSeparator = a.LastIndexOf(Path.DirectorySeparatorChar);
+        string mixed = a[..lastSeparator] + "/" + a[(lastSeparator + 1)..];
+        string unknown = Path.Combine(this._root, "Missing", "Missing.sln");
+
+        // Act / Assert
+        this._workspaces.ResolveSolution(a).Should().Be(a);
+        this._workspaces.ResolveSolution(forward).Should().Be(a);
+        this._workspaces.ResolveSolution(mixed).Should().Be(a);
+        this._workspaces.ResolveSolution(a + "/").Should().Be(a);
+        this._workspaces.ResolveSolution(a + Path.DirectorySeparatorChar).Should().Be(a);
+        this._workspaces.ResolveSolution(unknown).Should().BeNull();
+    }
+
     // ---------------------------------------------------------------- WorkspaceManager.Forget
 
     [Fact]

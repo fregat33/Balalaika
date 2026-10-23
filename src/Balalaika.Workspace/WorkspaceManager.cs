@@ -441,6 +441,28 @@ public sealed class WorkspaceManager(IndexStore index, PendingRefreshes pendingR
             return byPath;
         }
 
+        if (Path.IsPathRooted(candidate))
+        {
+            string? normalized = null;
+            try
+            {
+                normalized = Path.GetFullPath(candidate).TrimEnd('/', '\\');
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                // Not a usable path: fall through to the name matches.
+            }
+
+            if (normalized is not null)
+            {
+                byPath = known.FirstOrDefault(k => k.TrimEnd('/', '\\').Equals(normalized, StringComparison.OrdinalIgnoreCase));
+                if (byPath is not null)
+                {
+                    return byPath;
+                }
+            }
+        }
+
         string? byName = known.FirstOrDefault(k => SolutionDiscovery.SolutionName(k).Equals(candidate, StringComparison.OrdinalIgnoreCase));
         if (byName is not null)
         {
