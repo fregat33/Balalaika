@@ -39,7 +39,7 @@ they always did, and resolve among the visible solutions.
 |---|---|
 | `find_references`, `find_implementations`, `find_derived_types`, `get_call_graph` | yes: live solutions, twins in other solutions and the index groups |
 | `go_to_definition`, `get_symbol_info`, `list_members`, `get_outline`, `get_diagnostics` | yes: symbol/hint/path resolution |
-| `review_changes` | yes: the `solution` hint resolves among visible solutions |
+| `review_changes` | yes: the `solution` hint resolves among visible solutions; the review runs on the part's worktree (the git root is the worktree's `.git` file, the merge base is resolved there) |
 | `search_symbols` | yes |
 | `package_drift` | yes: consumers and sources in hidden solutions are left out |
 | `reindex` | yes: `all` means the visible loaded solutions; a hint among the visible ones |
@@ -238,7 +238,8 @@ Without `base` the repository's default branch is used: the branch `origin/HEAD`
 exists), else the first of `main`, `master`, `develop`, `dev` that exists; the first line names the ref chosen.
 The base side is a fork of the live Roslyn `Solution` in memory with the base text of each changed document (from
 `git show`); unchanged trees are shared, the fork is dropped with the result, and nothing is written to disk or to the
-index. Needs `git` on the PATH of the server process, or `GitPath` in `balalaika.json`; `status` prints the version
+index. A solution inside a linked worktree is reviewed through `?part=<worktree dir>` with the worktree's solution
+path; the default base is then resolved in that worktree. Needs `git` on the PATH of the server process, or `GitPath` in `balalaika.json`; `status` prints the version
 found. Without it, or with an unknown `base`, the first line says so and nothing else runs.
 
 ```

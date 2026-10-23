@@ -125,6 +125,25 @@ public sealed class SlotPartTests
     }
 
     [GitFact]
+    public async Task OnePart_ReviewChanges_ReviewsTheWorktreeBranch()
+    {
+        await using PartServer server = await PartServer.StartAsync();
+        string query = "part=" + Uri.EscapeDataString(server.R1);
+        (await server.CallAsync(query, "load_solution", new { solution = server.R1Solution })).Text.Should().Contain("projects loaded");
+
+        string explicitBase = (await server.CallAsync(query, "review_changes", new { solution = server.R1Solution, @base = "main" })).Text;
+        explicitBase.Should().StartWith("Review: Demo  working tree vs main", explicitBase);
+        explicitBase.Split('\n').Should().Contain(l => l.Contains("Only1.cs") && l.Contains("added"), "the branch's file is reviewed as added");
+        explicitBase.Should().Contain("OnlyOne").And.Contain("Total:");
+        explicitBase.Should().NotContain(server.R + Path.DirectorySeparatorChar, "never shows the base checkout");
+        explicitBase.Should().NotContain("Only2", "never shows another worktree");
+
+        string defaultBase = (await server.CallAsync(query, "review_changes", new { solution = server.R1Solution })).Text;
+        defaultBase.Split('\n')[0].Should().Contain("vs main", "the default base is resolved in the worktree");
+        defaultBase.Should().Contain("Only1.cs").And.NotContain("Only2");
+    }
+
+    [GitFact]
     public async Task OnePart_APathOrAHintOutsideTheView_IsUnknown_AndLoadSolutionDoesNotBringItBack()
     {
         await using PartServer server = await PartServer.StartAsync();
