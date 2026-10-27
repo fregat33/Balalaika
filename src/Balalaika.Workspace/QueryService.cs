@@ -228,6 +228,7 @@ public sealed class QueryService(
 
     private string NotFoundWithIndexFallback(string spec, int limit)
     {
+        ToolCallScope.Report(0);
         StringBuilder sb = new();
         if (SymbolResolver.TryParsePosition(spec, out string positionPath, out _, out _))
         {
@@ -1384,6 +1385,7 @@ public sealed class QueryService(
 
         if (total == 0)
         {
+            ToolCallScope.Report(0);
             sb.Append("No symbols match ").Append(query).Append(". Patterns support camel-case humps (e.g. UOC for UpdateOrderCommand).");
         }
 
@@ -1401,6 +1403,7 @@ public sealed class QueryService(
         IReadOnlyList<PackageDriftRow> rows = index.FindPackageDrift();
         if (rows.Count == 0)
         {
+            ToolCallScope.Report(0);
             return "No package version drift: every indexed consumer uses the version its source project currently declares. Only solutions indexed at least once are compared.";
         }
 

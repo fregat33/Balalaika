@@ -54,6 +54,29 @@ they always did, and resolve among the visible solutions.
 Cost note: background work (`PropagateSurfaceChangesAsync`, watchers, warm-up) is not part of any request and covers
 every known solution, so each loaded worktree adds to the cost of a surface change; `IdleEvictionMinutes` is 0 by default.
 
+## Caller and the per-call log line
+
+`caller=<text>` is an optional query parameter on `/mcp`, for example `/mcp?caller=worker/sonnet/t1`. It
+is free text, written into the per-call log line and nowhere else: it changes no result, and an absent or blank value
+is never an error.
+
+Every tool call writes one line to the `Balalaika.Server.ToolCalls` logger (Warning with `error=` appended when the
+call returned an error):
+
+```
+search_symbols pattern="UpgradeCase" limit=20 found=18 client="claude-code 2.1.311" caller="worker/sonnet/t1" part=- 3ms
+```
+
+- tool name and its arguments as `name=value` in the order received (strings quoted and cut to 120 characters, as run after an accepted argument rename);
+- `found`: the number of results the tool found (`0` for an empty result), `review_changes` logs the number of changed declarations; `-` for tools without a list (`go_to_definition`, `get_symbol_info`, `next_page`, `status`, `reindex`, `load_solution`, `forget_solution`);
+- `client`: name and version from the MCP `clientInfo`, or `-` when the client sent none;
+- `caller`: the `caller` parameter (trimmed, at most 100 characters), or `-`;
+- `part`: the `part` values joined by `;`, or `-`;
+- elapsed milliseconds.
+
+The structured fields (`Tool`, `Arguments`, `Found`, `Client`, `Caller`, `Part`, `ElapsedMs`, `Error`) are separate
+properties in the CLEF file.
+
 ## Symbol specs
 
 Every tool that takes a symbol accepts these forms, tried in this order inside each compilation:

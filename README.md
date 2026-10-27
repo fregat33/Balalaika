@@ -83,6 +83,9 @@ Logs go to the console and to a daily rolling file, `%LOCALAPPDATA%\Balalaika\lo
 Serilog's compact JSON format with one event per line. Seven days are kept by default; `LogDirectory` and
 `LogRetainedDays` in `balalaika.json` change the folder and retention.
 
+Every tool call logs one line (`Balalaika.Server.ToolCalls`): tool, arguments, found count, client, `caller` (an optional
+query parameter), `part` and elapsed time; the MCP SDK's own per-request lines are off. See [docs/tools.md](docs/tools.md).
+
 Quick manual call:
 
 ```powershell

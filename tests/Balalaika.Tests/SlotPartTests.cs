@@ -25,7 +25,7 @@ namespace Balalaika.Tests;
 /// The <c>part</c> view of <c>/mcp</c>: the real server (<c>Program</c>, in memory) over a temp root of real git
 /// repositories with linked worktrees; only the MSBuild load is replaced by a project built from the <c>.cs</c> files on disk.
 /// </summary>
-public sealed class SlotPartTests
+public sealed partial class SlotPartTests
 {
     // ---------------------------------------------------------------- step 0: the request is readable in a tool call
 
@@ -271,6 +271,8 @@ public sealed class SlotPartTests
                 });
                 builder.ConfigureTestServices(services =>
                 {
+                    // captures the per-call lines of Balalaika.Server.ToolCalls (see ToolCallLogTests.cs)
+                    services.AddSingleton<ILoggerFactory>(_ => new LoggerFactory([new ToolCallCaptureProvider(this.ToolCallLines)]));
                     services.AddSingleton(sp => new WorkspaceManager(
                         sp.GetRequiredService<IndexStore>(),
                         sp.GetRequiredService<PendingRefreshes>(),
@@ -295,6 +297,8 @@ public sealed class SlotPartTests
         }
 
         public string Root { get; }
+
+        public ConcurrentQueue<(LogLevel Level, string Message)> ToolCallLines { get; } = new();
 
         public string R => Path.Combine(this.Root, "r");
 

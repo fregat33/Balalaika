@@ -26,6 +26,7 @@ public sealed class ResultPager(int capacity = 128, TimeSpan? ttl = null)
     /// </summary>
     public int AppendPage(StringBuilder sb, IReadOnlyList<string> lines, int pageSize, string label)
     {
+        ToolCallScope.Add(lines.Count);
         pageSize = Math.Max(1, pageSize);
         int shown = Math.Min(pageSize, lines.Count);
         for (int i = 0; i < shown; i++)

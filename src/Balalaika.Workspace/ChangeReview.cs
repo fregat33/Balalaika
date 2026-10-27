@@ -478,6 +478,7 @@ public static class ChangeReview
         }
 
         pager.AppendPage(sb, lines, limit, $"review_changes {report.SolutionName} vs {report.BaseRef}");
+        ToolCallScope.Report(declarations);
         sb.Append("Total: ").Append(source).Append(" source files, ").Append(declarations).Append(" changed declarations (")
           .Append(surface).Append(" surface, ").Append(bodyOnly).Append(" body-only or private), ")
           .Append(errors).Append(" errors, ").Append(warnings).Append(" warnings");

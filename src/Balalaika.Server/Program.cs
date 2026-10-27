@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Stopwatch = System.Diagnostics.Stopwatch;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -34,6 +35,7 @@ builder.Host.UseSerilog((context, services, configuration) =>
         .MinimumLevel.Information()
         .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
         .MinimumLevel.Override("Microsoft.Hosting", LogEventLevel.Information)
+        .MinimumLevel.Override("ModelContextProtocol", LogEventLevel.Warning)
         .Enrich.FromLogContext()
         .WriteTo.Console(outputTemplate: "{Timestamp:HH:mm:ss} {Level:u4} {SourceContext}: {Message:lj}{NewLine}{Exception}")
         .WriteTo.File(
@@ -91,11 +93,18 @@ builder.Services
             else if (ToolArgumentCheck.Describe(call.Name, tool.ProtocolTool.InputSchema, received) is { } problem)
             {
                 toolCallLogger?.LogWarning("Rejected {Tool} call with arguments [{Arguments}]: {Problem}", call.Name, string.Join(", ", received), problem);
-                return new CallToolResult { IsError = true, Content = [new TextContentBlock { Text = problem }] };
+                CallToolResult rejected = new() { IsError = true, Content = [new TextContentBlock { Text = problem }] };
+                LogToolCall(request, call, rejected, 0);
+                return rejected;
             }
         }
 
-        return await next(request, cancellationToken).ConfigureAwait(false);
+        // One line per call, written after it ran. The scope collects the found count from the pager and the tools.
+        ToolCallScope.Counter scope = ToolCallScope.Begin();
+        long started = Stopwatch.GetTimestamp();
+        CallToolResult result = await next(request, cancellationToken).ConfigureAwait(false);
+        LogToolCall(request, request.Params, result, (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds, scope.Found);
+        return result;
     }));
 
 int port = builder.Configuration.GetValue<int?>("Balalaika:Port") ?? 5301;
@@ -125,6 +134,24 @@ catch (Exception ex)
 finally
 {
     Log.CloseAndFlush();
+}
+
+void LogToolCall(RequestContext<CallToolRequestParams> request, CallToolRequestParams? call, CallToolResult result, long elapsedMs, int? found = null)
+{
+    if (toolCallLogger is null || call is null)
+    {
+        return;
+    }
+
+    try
+    {
+        HttpContext? http = request.Services?.GetService<IHttpContextAccessor>()?.HttpContext;
+        ToolCallLog.Write(toolCallLogger, ToolCallLog.Describe(call.Name, call.Arguments, result, request.Server?.ClientInfo, http, found, elapsedMs));
+    }
+    catch (Exception ex)
+    {
+        toolCallLogger.LogWarning(ex, "Could not log the call of {Tool}", call.Name);
+    }
 }
 
 /// <summary>Lets the test project start the real server in memory.</summary>
