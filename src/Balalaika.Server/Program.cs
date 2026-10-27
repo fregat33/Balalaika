@@ -67,6 +67,11 @@ builder.Services
     .AddMcpServer(o => o.ServerInfo = new Implementation { Name = "balalaika", Version = "0.1.0" })
     .WithHttpTransport(o => o.Stateless = true)
     .WithTools<BalalaikaTools>()
+    // Clients probe for prompts and resources after initialize; the server has none, so say so instead of
+    // letting the SDK answer with an exception and two Warnings per probe.
+    .WithListPromptsHandler((_, _) => ValueTask.FromResult(new ListPromptsResult()))
+    .WithListResourcesHandler((_, _) => ValueTask.FromResult(new ListResourcesResult()))
+    .WithListResourceTemplatesHandler((_, _) => ValueTask.FromResult(new ListResourceTemplatesResult()))
     .WithRequestFilters(filters => filters.AddCallToolFilter(next => async (request, cancellationToken) =>
     {
         // The view of this call: the solutions the request's 'part' parameters leave visible. It follows the async flow

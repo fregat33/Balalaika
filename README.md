@@ -81,7 +81,8 @@ is the check that it is running; the target repositories' agent instructions can
 
 Logs go to the console and to a daily rolling file, `%LOCALAPPDATA%\Balalaika\logs\balalaika-yyyyMMdd.clef`, in
 Serilog's compact JSON format with one event per line. Seven days are kept by default; `LogDirectory` and
-`LogRetainedDays` in `balalaika.json` change the folder and retention.
+`LogRetainedDays` in `balalaika.json` change the folder and retention. The server has no prompts or resources; a
+client's `prompts/list`, `resources/list` and `resources/templates/list` probes get an empty list and leave no warning.
 
 Every tool call logs one line (`Balalaika.Server.ToolCalls`): tool, arguments, found count, client, `caller` (an optional
 query parameter), `part` and elapsed time; the MCP SDK's own per-request lines are off. See [docs/tools.md](docs/tools.md).

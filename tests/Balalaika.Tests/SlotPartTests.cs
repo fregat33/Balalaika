@@ -272,7 +272,7 @@ public sealed partial class SlotPartTests
                 builder.ConfigureTestServices(services =>
                 {
                     // captures the per-call lines of Balalaika.Server.ToolCalls (see ToolCallLogTests.cs)
-                    services.AddSingleton<ILoggerFactory>(_ => new LoggerFactory([new ToolCallCaptureProvider(this.ToolCallLines)]));
+                    services.AddSingleton<ILoggerFactory>(_ => new LoggerFactory([new ToolCallCaptureProvider(this.ToolCallLines), new SdkCaptureProvider(this.SdkLines)]));
                     services.AddSingleton(sp => new WorkspaceManager(
                         sp.GetRequiredService<IndexStore>(),
                         sp.GetRequiredService<PendingRefreshes>(),
@@ -299,6 +299,9 @@ public sealed partial class SlotPartTests
         public string Root { get; }
 
         public ConcurrentQueue<(LogLevel Level, string Message)> ToolCallLines { get; } = new();
+
+        /// <summary>Lines of the <c>ModelContextProtocol.*</c> categories (see McpProbeTests.cs).</summary>
+        public ConcurrentQueue<(LogLevel Level, string Message)> SdkLines { get; } = new();
 
         public string R => Path.Combine(this.Root, "r");
 
@@ -362,6 +365,25 @@ public sealed partial class SlotPartTests
             bool isError = result.TryGetProperty("isError", out JsonElement e) && e.GetBoolean();
             string text = string.Concat(result.GetProperty("content").EnumerateArray().Select(c => c.GetProperty("text").GetString()));
             return new McpResult(isError, text);
+        }
+
+        /// <summary>One JSON-RPC request of any method as its own stateless POST to <c>/mcp</c>; returns the whole response object.</summary>
+        public async Task<JsonElement> PostAsync(string method, object? parameters = null)
+        {
+            string body = JsonSerializer.Serialize(new
+            {
+                jsonrpc = "2.0",
+                id = Interlocked.Increment(ref this._id),
+                method,
+                @params = parameters ?? new { },
+            });
+            using HttpResponseMessage response = await this._client.PostAsync("/mcp", new StringContent(body, Encoding.UTF8, "application/json"));
+            string raw = await response.Content.ReadAsStringAsync();
+            string json = raw.TrimStart().StartsWith('{')
+                ? raw
+                : raw.Split('\n').Select(l => l.TrimEnd('\r')).First(l => l.StartsWith("data:")).Substring(5).Trim();
+            using JsonDocument doc = JsonDocument.Parse(json);
+            return doc.RootElement.Clone();
         }
 
         public async Task<string> SearchAsync(string query, string pattern)
