@@ -29,6 +29,7 @@ public sealed class IndexingHostedService(
     private readonly ConcurrentDictionary<string, Task> _loadIndexing = new(StringComparer.OrdinalIgnoreCase);
     private readonly Channel<string> _immediateRefreshes = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
     private readonly HashSet<string> _immediateQueued = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string> _solutionRoots = new(StringComparer.OrdinalIgnoreCase);
     private RepoWatcher? _watcher;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -59,7 +60,11 @@ public sealed class IndexingHostedService(
         // Every load indexes the solution once. The job's completion is kept per solution so a caller that needs the
         // index (the warm-up) awaits this job instead of queueing a second, redundant walk behind it.
         workspaces.SolutionLoaded += loaded => this._loadIndexing[loaded.SolutionPath] = jobs.Enqueue(new IndexSolutionJob(loaded.SolutionPath, Force: false));
-        workspaces.SolutionForgotten += forgotten => this._loadIndexing.TryRemove(forgotten.Path, out _);
+        workspaces.SolutionForgotten += forgotten =>
+        {
+            this._loadIndexing.TryRemove(forgotten.Path, out _);
+            this.UnwatchWorktreeHeadOf(forgotten.Path);
+        };
 
         this._watcher = new RepoWatcher(
             batch => jobs.Enqueue(batch.Overflowed ? new FullReconcileJob() : new FileChangesJob(batch.Paths, batch.CreatedPaths, batch.CreatedDirectories)),
@@ -138,11 +143,35 @@ public sealed class IndexingHostedService(
             return;
         }
 
-        foreach (string root in workspaces.KnownSolutions.Select(s => git.FindRepositoryRoot(s)).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (string solution in workspaces.KnownSolutions)
         {
-            this._watcher.WatchWorktreeHead(root);
+            if (git.FindRepositoryRoot(solution) is { } root)
+            {
+                this._solutionRoots[solution] = root;
+                this._watcher.WatchWorktreeHead(root);
+            }
         }
     }
+
+    /// <summary>
+    /// Releases the HEAD watchers of a forgotten solution's repository root once no other known solution lives in it
+    /// (a removed worktree). The root is the one recorded when the watch started: the directory is gone by now.
+    /// </summary>
+    private void UnwatchWorktreeHeadOf(string solutionPath)
+    {
+        if (this._watcher is null || !this._solutionRoots.TryRemove(solutionPath, out string? root))
+        {
+            return;
+        }
+
+        if (!this._solutionRoots.Values.Contains(root, StringComparer.OrdinalIgnoreCase))
+        {
+            this._watcher.UnwatchWorktreeHead(root);
+        }
+    }
+
+    /// <summary>Number of live watchers of the repo watcher; for tests.</summary>
+    public int WatcherCountForTests => this._watcher?.WatcherCountForTests ?? 0;
 
     /// <summary>The commit HEAD points at for the repository a solution lives in, or null (no repository, no git).</summary>
     private async Task<string?> ReadHeadAsync(string solutionPath, CancellationToken ct)

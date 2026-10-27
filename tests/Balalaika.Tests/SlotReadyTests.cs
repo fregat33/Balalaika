@@ -4,6 +4,7 @@ using Process = System.Diagnostics.Process;
 using ProcessStartInfo = System.Diagnostics.ProcessStartInfo;
 using FluentAssertions;
 using Microsoft.CodeAnalysis;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Balalaika.Index;
@@ -158,6 +159,82 @@ public sealed class SlotReadyTests
 
         // Assert
         watcher.WatcherCountForTests.Should().Be(0);
+    }
+
+    [GitFact]
+    public async Task Worktree_UnwatchedHead_ReleasesAllItsWatchers_AndCanBeWatchedAgain_ButNotAfterDispose()
+    {
+        // Arrange
+        await using Host host = new(warmUp: false);
+        host.CreateRepoWithWorktree();
+        using RepoWatcher watcher = new(_ => { }, TimeSpan.FromMilliseconds(100), NullLogger.Instance);
+        watcher.WatchWorktreeHead(host.Slot).Should().BeTrue();
+        watcher.WatcherCountForTests.Should().Be(3);
+
+        // Act + Assert
+        watcher.UnwatchWorktreeHead(host.Slot).Should().BeTrue();
+        watcher.WatcherCountForTests.Should().Be(0);
+        watcher.UnwatchWorktreeHead(host.Slot).Should().BeFalse("nothing is watched any more");
+        watcher.WatchWorktreeHead(host.Slot).Should().BeTrue();
+        watcher.WatcherCountForTests.Should().Be(3);
+
+        // Act: a watch after Dispose creates nothing
+        watcher.Dispose();
+        watcher.WatchWorktreeHead(host.Slot).Should().BeFalse();
+        watcher.WatcherCountForTests.Should().Be(0);
+    }
+
+    [GitFact]
+    public async Task Worktree_GitDirectoryDeletedUnderTheLiveWatcher_ReleasesTheWatchers_WithoutAWarning()
+    {
+        // Arrange
+        await using Host host = new(warmUp: false);
+        host.CreateRepoWithWorktree();
+        CapturingLogger logger = new();
+        using RepoWatcher watcher = new(_ => { }, TimeSpan.FromMilliseconds(100), logger);
+        watcher.WatchWorktreeHead(host.Slot).Should().BeTrue();
+        watcher.WatcherCountForTests.Should().Be(3);
+
+        // Act: what `git worktree remove` does to the directory the HEAD watcher sits on
+        Directory.Delete(Path.Combine(host.Repo, ".git", "worktrees", "slot"), recursive: true);
+
+        // Assert
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (watcher.WatcherCountForTests != 0 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(50);
+        }
+
+        watcher.WatcherCountForTests.Should().Be(0);
+        logger.Warnings.Should().BeEmpty();
+    }
+
+    [GitFact]
+    public async Task Worktree_Removed_ReleasesItsWatchers_AndAReplacementAtTheSamePathIsWatched()
+    {
+        // Arrange
+        await using Host host = new(warmUp: true);
+        host.CreateRepoWithWorktree();
+        await host.StartAsync();
+        string old = host.Git(host.Slot, "rev-parse", "HEAD").Trim();
+        (await WaitUntilAsync(() => host.IsReadyWithHead(host.SlotSolution, old))).Should().BeTrue(host.Status());
+        int watching = host.WatcherCount;
+
+        // Act: the worktree is removed
+        host.Git(host.Repo, "worktree", "remove", "--force", host.Slot);
+
+        // Assert: forgotten, and HEAD + loose ref + packed-refs watchers of the slot are gone
+        (await WaitUntilAsync(() => !host.Status().Contains(host.SlotSolution, StringComparison.OrdinalIgnoreCase))).Should().BeTrue(host.Status());
+        (await WaitUntilAsync(() => host.WatcherCount == watching - 3)).Should().BeTrue($"watchers: {host.WatcherCount}, before removal: {watching}");
+
+        // Act: a worktree appears at the same path and moves to a new commit
+        host.Git(host.Repo, "worktree", "add", host.Slot, "main");
+        string moved = host.CommitSameTree(host.Repo, old);
+        host.Git(host.Slot, "checkout", "--detach", moved);
+
+        // Assert
+        (await WaitUntilAsync(() => host.IsReadyWithHead(host.SlotSolution, moved))).Should().BeTrue(host.Status());
+        host.WatcherCount.Should().Be(watching - 3 + 1, "the slot is detached again: only its HEAD watcher, no loose-ref or packed-refs watcher");
     }
 
     [GitFact]
@@ -402,6 +479,26 @@ public sealed class SlotReadyTests
         return condition();
     }
 
+    private sealed class CapturingLogger : ILogger
+    {
+        private readonly ConcurrentQueue<string> _warnings = new();
+
+        public IReadOnlyCollection<string> Warnings => this._warnings;
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel >= LogLevel.Warning)
+            {
+                this._warnings.Enqueue(formatter(state, exception));
+            }
+        }
+    }
+
     /// <summary>Just enough of the server for <see cref="QueryService.Status"/>.</summary>
     private sealed class Fixture : IDisposable
     {
@@ -509,6 +606,8 @@ public sealed class SlotReadyTests
         public WorkspaceManager Workspaces { get; }
 
         public IndexJobQueue Jobs { get; }
+
+        public int WatcherCount => this._service.WatcherCountForTests;
 
         public int LoadCount(string solution) => this._loads.GetValueOrDefault(solution);
 

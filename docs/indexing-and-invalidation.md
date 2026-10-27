@@ -110,6 +110,12 @@ switch) the ref watchers are re-pointed; a detached `HEAD` has only the `HEAD` w
 root. Every event of these watchers is reported with the synthetic path `<root>\.git\HEAD`, so the classifier and the
 consumers are unchanged.
 
+When a worktree goes away (`git worktree remove`, or its directory is deleted) the server releases its `HEAD`, ref and
+`packed-refs` watchers: either its solutions are forgotten and none is left under that root, or the `HEAD` watcher fails
+because its git directory vanished (on Windows `Access is denied`). Neither case logs a warning or schedules a full
+reconcile (a buffer overflow of the `HEAD` watcher still does). A worktree created again at the same path is watched
+again the next time solutions appear, so a checkout in it updates the recorded head.
+
 ### Project reload on git and overflow batches
 
 A solution keeps the last-write time and size of its solution file, its project files, the `.props`/`.targets` beside a

@@ -27,6 +27,7 @@ public sealed class RepoWatcher : IDisposable
     private readonly IndexActivity? _activity;
     private readonly HashSet<string> _watchedHeads = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, (string Signature, List<FileSystemWatcher> Watchers)> _refWatchers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (string Head, FileSystemWatcher? Watcher)> _worktrees = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _repointGate = new();
     private bool _disposed;
     private Timer? _timer;
@@ -62,16 +63,49 @@ public sealed class RepoWatcher : IDisposable
         string reported = Path.Combine(worktreeRoot, ".git", "HEAD");
         lock (this._gate)
         {
-            if (!this._watchedHeads.Add(files.Head))
+            if (this._disposed || !this._watchedHeads.Add(files.Head))
             {
                 return false;
             }
+
+            this._worktrees[worktreeRoot] = (files.Head, null);
         }
 
-        FileSystemWatcher headWatcher = this.CreateWatcher(dir, "HEAD", reported, worktreeRoot, () => this.RepointRefWatchers(worktreeRoot, files.Head, reported));
+        FileSystemWatcher headWatcher = this.CreateWatcher(
+            dir,
+            "HEAD",
+            reported,
+            worktreeRoot,
+            () =>
+            {
+                // Deleting the worktree's git directory raises a Deleted event on some platforms instead of an Error.
+                if (Directory.Exists(dir))
+                {
+                    this.RepointRefWatchers(worktreeRoot, files.Head, reported);
+                }
+                else
+                {
+                    this.UnwatchWorktreeHead(worktreeRoot);
+                }
+            },
+            onGone: () => this.UnwatchWorktreeHead(worktreeRoot));
+        bool published;
         lock (this._gate)
         {
-            this._watchers.Add(headWatcher);
+            // Unwatched (or disposed) while the watcher was being created: nothing may keep it.
+            published = !this._disposed && this._worktrees.TryGetValue(worktreeRoot, out (string Head, FileSystemWatcher? Watcher) entry) && entry.Head == files.Head;
+            if (published)
+            {
+                this._watchers.Add(headWatcher);
+                this._worktrees[worktreeRoot] = (files.Head, headWatcher);
+            }
+        }
+
+        if (!published)
+        {
+            headWatcher.EnableRaisingEvents = false;
+            headWatcher.Dispose();
+            return false;
         }
 
         this.RepointRefWatchers(worktreeRoot, files.Head, reported);
@@ -79,8 +113,55 @@ public sealed class RepoWatcher : IDisposable
         return true;
     }
 
-    /// <summary>A non-recursive watcher on one file name (or one name pattern) of a directory; every event is reported as <paramref name="reported"/>.</summary>
-    private FileSystemWatcher CreateWatcher(string dir, string filter, string reported, string root, Action? afterEvent = null)
+    /// <summary>
+    /// Releases the HEAD, ref and <c>packed-refs</c> watchers that <see cref="WatchWorktreeHead"/> created for
+    /// <paramref name="worktreeRoot"/>, so a worktree created again at the same path is watched again. Returns false
+    /// when nothing was watched for that root.
+    /// </summary>
+    public bool UnwatchWorktreeHead(string worktreeRoot)
+    {
+        List<FileSystemWatcher> released = [];
+        string head;
+        lock (this._gate)
+        {
+            if (!this._worktrees.Remove(worktreeRoot, out (string Head, FileSystemWatcher? Watcher) entry))
+            {
+                return false;
+            }
+
+            head = entry.Head;
+            this._watchedHeads.Remove(head);
+            if (entry.Watcher is not null)
+            {
+                released.Add(entry.Watcher);
+            }
+
+            if (this._refWatchers.Remove(head, out (string Signature, List<FileSystemWatcher> Watchers) refs))
+            {
+                released.AddRange(refs.Watchers);
+            }
+
+            foreach (FileSystemWatcher w in released)
+            {
+                this._watchers.Remove(w);
+            }
+        }
+
+        foreach (FileSystemWatcher w in released)
+        {
+            w.EnableRaisingEvents = false;
+            w.Dispose();
+        }
+
+        this._logger.LogInformation("Released git HEAD watchers {Head} of {Root}", head, worktreeRoot);
+        return true;
+    }
+
+    /// <summary>
+    /// A non-recursive watcher on one file name (or one name pattern) of a directory; every event is reported as <paramref name="reported"/>.
+    /// <paramref name="onGone"/> is called instead of scheduling a full reconcile when the watcher fails because its directory went away.
+    /// </summary>
+    private FileSystemWatcher CreateWatcher(string dir, string filter, string reported, string root, Action? afterEvent = null, Action? onGone = null)
     {
         FileSystemWatcher watcher = new(dir, filter)
         {
@@ -98,6 +179,13 @@ public sealed class RepoWatcher : IDisposable
         watcher.Renamed += (_, e) => OnChange(null, e);
         watcher.Error += (_, e) =>
         {
+            // Anything but a buffer overflow on a HEAD watcher means the worktree's git directory is gone (Windows: "Access is denied").
+            if (onGone is not null && e.GetException() is not InternalBufferOverflowException)
+            {
+                onGone();
+                return;
+            }
+
             this._logger.LogWarning(e.GetException(), "Git ref watcher error for {Root}; scheduling full reconcile", root);
             this.OnOverflow();
         };
@@ -149,7 +237,7 @@ public sealed class RepoWatcher : IDisposable
         List<FileSystemWatcher> old;
         lock (this._gate)
         {
-            if (this._disposed)
+            if (this._disposed || !this._watchedHeads.Contains(headPath))
             {
                 return;
             }
@@ -189,7 +277,8 @@ public sealed class RepoWatcher : IDisposable
         bool disposed;
         lock (this._gate)
         {
-            disposed = this._disposed;
+            // Also dropped when the worktree was unwatched meanwhile, or the watchers would outlive it.
+            disposed = this._disposed || !this._watchedHeads.Contains(headPath);
             if (!disposed)
             {
                 this._refWatchers[headPath] = (signature, created);
@@ -402,6 +491,8 @@ public sealed class RepoWatcher : IDisposable
             watchers = this._watchers.ToArray();
             this._watchers.Clear();
             this._refWatchers.Clear();
+            this._worktrees.Clear();
+            this._watchedHeads.Clear();
         }
 
         foreach (FileSystemWatcher w in watchers)
