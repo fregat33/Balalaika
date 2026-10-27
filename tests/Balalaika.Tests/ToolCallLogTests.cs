@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using FluentAssertions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Balalaika.Server;
 using Balalaika.Workspace;
@@ -39,6 +40,30 @@ public sealed class ToolCallLogTests
         string json = "{\"scope\": {\n  \"kind\": [ \"creation\",\n \"base\" ]\n }}";
 
         ToolCallLog.FormatArguments(Args(json)).Should().Be("scope={\"kind\":[\"creation\",\"base\"]}");
+    }
+
+    [Fact]
+    public void FormatArguments_EscapesQuotesBackslashesAndLineBreaks_InStrings()
+    {
+        string formatted = ToolCallLog.FormatArguments(Args("""{"pattern":"say \"hi\"\\there\nnow\r"}"""));
+
+        formatted.Should().Be("pattern=\"say \\\"hi\\\"\\\\there\\nnow\\r\"");
+        formatted.Should().NotContainAny("\n", "\r");
+    }
+
+    [Fact]
+    public void Client_EscapesQuotesInTheName()
+    {
+        ToolCallLog.Client(new Implementation { Name = "cli \"x\"", Version = "1" }).Should().Be("\"cli \\\"x\\\" 1\"");
+    }
+
+    [Fact]
+    public void Caller_IsCutFirstAndEscapedAfter()
+    {
+        DefaultHttpContext http = new();
+        http.Request.QueryString = new QueryString("?caller=" + Uri.EscapeDataString(new string('"', 150)));
+
+        ToolCallLog.Caller(http).Should().Be("\"" + string.Concat(Enumerable.Repeat("\\\"", 100)) + "…\"");
     }
 
     [Fact]
@@ -120,7 +145,7 @@ public sealed partial class SlotPartTests
         (LogLevel level, string line) = LastLineOf(server, "find_references");
         level.Should().Be(LogLevel.Information);
         line.Should().StartWith("find_references symbol=\"Acme.Orders.Shared.Run\" found=" + total + " client=");
-        line.Should().Contain($"part=\"{server.R1}\"").And.Contain("caller=-").And.MatchRegex(@" \d+ms$");
+        line.Should().Contain($"part=\"{server.R1.Replace("\\", "\\\\")}\"").And.Contain("caller=-").And.MatchRegex(@" \d+ms$");
         LastLineOf(server, "search_symbols").Message.Should().Contain("pattern=\"ZzzNoSuchSymbolAnywhere\" found=0 ");
         LastLineOf(server, "status").Message.Should().Contain(" found=- ");
 
@@ -145,6 +170,19 @@ public sealed partial class SlotPartTests
         with.Text.Should().NotContain("worker/sonnet");
         Output?.WriteLine(withLine);
         Output?.WriteLine(withoutLine);
+    }
+
+    [GitFact]
+    public async Task ToolCallLine_EscapesAForgedCaller_SoNoFieldIsForged()
+    {
+        await using PartServer server = await PartServer.StartAsync(withRepositories: false);
+
+        await server.CallAsync("caller=" + Uri.EscapeDataString("a\" part=\"x"), "status");
+        string line = LastLineOf(server, "status").Message;
+
+        line.Should().Contain("caller=\"a\\\" part=\\\"x\"").And.Contain("part=-");
+        line.Should().MatchRegex(@"^status\s+found=- client=\S+ caller=""(?:[^""\\]|\\.)*"" part=- \d+ms$");
+        Output?.WriteLine(line);
     }
 
     private ITestOutputHelper Output { get; }

@@ -74,6 +74,10 @@ search_symbols pattern="UpgradeCase" limit=20 found=18 client="claude-code 2.1.3
 - `part`: the `part` values joined by `;`, or `-`;
 - elapsed milliseconds.
 
+Quoted values (string arguments, `client`, `caller`, `part`) escape `"` as `\"`, `\` as `\\`, and CR and LF as `\r`
+and `\n`, so the line stays one line and can be split back into fields. Values are cut first and escaped after, so the
+first characters stay recognisable and the visible length is the limit plus the escapes.
+
 The structured fields (`Tool`, `Arguments`, `Found`, `Client`, `Caller`, `Part`, `ElapsedMs`, `Error`) are separate
 properties in the CLEF file.
 

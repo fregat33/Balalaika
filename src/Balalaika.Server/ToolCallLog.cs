@@ -95,7 +95,8 @@ public static class ToolCallLog
         _ => Cut(JsonSerializer.Serialize(value), ArgumentLimit),
     };
 
-    private static string Quote(string text) => $"\"{text}\"";
+    private static string Quote(string text) =>
+        $"\"{text.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n")}\"";
 
     private static string Cut(string text, int limit) => text.Length <= limit ? text : text[..limit] + "…";
 }
