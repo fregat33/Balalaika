@@ -298,6 +298,63 @@ public sealed class SolutionDiscoveryTests : IDisposable
         await consumer.Awaiting(c => c).Should().ThrowAsync<OperationCanceledException>();
     }
 
+    [Fact]
+    public async Task ForgetSolutionAsync_AFragmentMatchingSeveralSolutions_ForgetsNothing_AndAnswersWithTheCandidates()
+    {
+        // Arrange
+        string orders = this.MakeSolution("Acme.Orders");
+        string billing = this.MakeSolution("Acme.Billing");
+        this._workspaces.RegisterSolutions([orders, billing]);
+        IndexJobQueue jobs = new();
+        QueryService query = this.CreateQuery(jobs);
+
+        // Act
+        string answer = await query.ForgetSolutionAsync("Acme", CancellationToken.None);
+
+        // Assert
+        IReadOnlyList<string> known = this._workspaces.KnownSolutions;
+        answer.Should().StartWith("Ambiguous solution: Acme matches ").And.EndWith(". Use the full path or the exact name.");
+        answer.Should().Contain("Acme.Orders (" + orders + ")").And.Contain("Acme.Billing (" + billing + ")");
+        jobs.Pending.Should().Be(0);
+        known.Should().BeEquivalentTo([orders, billing]);
+    }
+
+    [Fact]
+    public async Task ForgetSolutionAsync_AFragmentMatchingOneSolution_AndAnExactNameOfDifferentCase_ForgetOnlyThatSolution()
+    {
+        // Arrange
+        string orders = this.MakeSolution("Acme.Orders");
+        string tests = this.MakeSolution("Acme.Orders.Tests");
+        string billing = this.MakeSolution("Acme.Billing");
+        this._workspaces.RegisterSolutions([orders, tests, billing]);
+        IndexJobQueue jobs = new();
+        QueryService query = this.CreateQuery(jobs);
+        using CancellationTokenSource stop = new();
+        Task consumer = Task.Run(async () =>
+        {
+            await foreach (QueuedJob queued in jobs.ReadAllAsync(stop.Token))
+            {
+                if (queued.Job is ForgetSolutionJob forget)
+                {
+                    forget.Result.TrySetResult(this._workspaces.Forget(forget.Hint));
+                }
+
+                jobs.MarkCompleted(queued);
+            }
+        });
+
+        // Act
+        string byFragment = await query.ForgetSolutionAsync("Billing", CancellationToken.None);
+        string byExactName = await query.ForgetSolutionAsync("acme.orders", CancellationToken.None);
+        stop.Cancel();
+
+        // Assert
+        byFragment.Should().Be($"Forgot Acme.Billing ({billing}): 0 projects removed from the index.");
+        byExactName.Should().Be($"Forgot Acme.Orders ({orders}): 0 projects removed from the index.");
+        this._workspaces.KnownSolutions.Should().BeEquivalentTo([tests]);
+        await consumer.Awaiting(c => c).Should().ThrowAsync<OperationCanceledException>();
+    }
+
     // ---------------------------------------------------------------- re-discovery, .sln wins
 
     [Fact]

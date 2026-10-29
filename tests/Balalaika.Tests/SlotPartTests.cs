@@ -177,6 +177,18 @@ public sealed partial class SlotPartTests
     }
 
     [GitFact]
+    public async Task ForgetSolution_OfASolutionHiddenByThePartView_AnswersUnknown_AndKeepsItKnown()
+    {
+        await using PartServer server = await PartServer.StartAsync();
+        string query = "part=" + Uri.EscapeDataString(server.R1);
+
+        string text = (await server.CallAsync(query, "forget_solution", new { solution = server.RSolution })).Text;
+
+        text.Should().StartWith("Unknown solution: " + server.RSolution);
+        server.Workspaces.KnownSolutions.Should().Contain(server.RSolution);
+    }
+
+    [GitFact]
     public async Task Parts_TwoOfOneRepository_AndANonWorktree_AreRefused()
     {
         await using PartServer server = await PartServer.StartAsync();

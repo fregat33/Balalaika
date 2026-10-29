@@ -384,7 +384,11 @@ yet (inside the roots or not); that file is registered first. A missing path or 
 Removes a solution from the known list: unloads it (even if pinned), drops its pending refresh and deletes its project
 rows (and with them blobs, symbols, references, relations) from the index. Answers
 `Forgot Acme.Orders (C:\src\acme\Acme.Orders\Acme.Orders.sln): 4 projects removed from the index.`; an unknown name
-answers `Unknown solution: ...`. Annotated destructive. If the solution file still exists it stays forgotten until
+answers `Unknown solution: ...`. `solution` is resolved among the visible solutions in this order: exact full path
+(either separator), exact name (case-insensitive), then a name fragment. A fragment that matches two or more solutions
+forgets nothing and answers `Ambiguous solution: Acme matches Acme.Orders (<path>), Acme.Billing (<path>). Use the full
+path or the exact name.`; an exact name wins over longer names that contain it. A blank `solution` forgets nothing.
+Annotated destructive. If the solution file still exists it stays forgotten until
 `load_solution` is called with its full path, a create or rename event for the file arrives, or the server restarts.
 Solutions whose file disappears are forgotten automatically, and `*.sln` / `*.slnx` files that appear under a root are
 registered automatically (see "Runtime discovery" in `indexing-and-invalidation.md`).

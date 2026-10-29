@@ -1533,8 +1533,13 @@ public sealed class QueryService(
     {
         // Forgetting runs on the index consumer, serialised with the jobs that write rows, so none can bring them back.
         // The consumer has no request view, so the hint is resolved here, among the solutions this request sees, to a path.
-        string? visible = string.IsNullOrWhiteSpace(solution) ? null : workspaces.ResolveSolution(solution);
-        ForgetSolutionJob job = new(visible ?? "");
+        IReadOnlyList<string> candidates = workspaces.ResolveForForget(solution);
+        if (candidates.Count > 1)
+        {
+            return $"Ambiguous solution: {solution} matches {string.Join(", ", candidates.Select(p => $"{SolutionDiscovery.SolutionName(p)} ({p})"))}. Use the full path or the exact name.";
+        }
+
+        ForgetSolutionJob job = new(candidates.Count == 1 ? candidates[0] : "");
         _ = jobs.Enqueue(job);
         ForgottenSolution? forgotten = await job.Result.Task.WaitAsync(ct).ConfigureAwait(false);
         if (forgotten is null)

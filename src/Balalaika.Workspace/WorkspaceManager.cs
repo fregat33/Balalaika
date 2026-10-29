@@ -433,7 +433,35 @@ public sealed class WorkspaceManager(IndexStore index, PendingRefreshes pendingR
         return Match(known, nameOrPath.Trim());
     }
 
+    /// <summary>
+    /// Every solution a hint can mean, among the solutions this request sees: the one exact full-path or exact-name match
+    /// when there is one, else all solutions whose name contains the hint. Blank hint: none (no default fallback).
+    /// </summary>
+    public IReadOnlyList<string> ResolveForForget(string? hint)
+    {
+        if (string.IsNullOrWhiteSpace(hint))
+        {
+            return [];
+        }
+
+        IReadOnlyList<string> known = this.KnownSolutions;
+        string candidate = hint.Trim();
+        string? exact = MatchExact(known, candidate);
+        if (exact is not null)
+        {
+            return [exact];
+        }
+
+        return known.Where(k => SolutionDiscovery.SolutionName(k).Contains(candidate, StringComparison.OrdinalIgnoreCase)).ToList();
+    }
+
     private static string? Match(IReadOnlyList<string> known, string candidate)
+    {
+        return MatchExact(known, candidate)
+            ?? known.FirstOrDefault(k => SolutionDiscovery.SolutionName(k).Contains(candidate, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string? MatchExact(IReadOnlyList<string> known, string candidate)
     {
         string? byPath = known.FirstOrDefault(k => k.Equals(candidate, StringComparison.OrdinalIgnoreCase));
         if (byPath is not null)
@@ -463,13 +491,7 @@ public sealed class WorkspaceManager(IndexStore index, PendingRefreshes pendingR
             }
         }
 
-        string? byName = known.FirstOrDefault(k => SolutionDiscovery.SolutionName(k).Equals(candidate, StringComparison.OrdinalIgnoreCase));
-        if (byName is not null)
-        {
-            return byName;
-        }
-
-        return known.FirstOrDefault(k => SolutionDiscovery.SolutionName(k).Contains(candidate, StringComparison.OrdinalIgnoreCase));
+        return known.FirstOrDefault(k => SolutionDiscovery.SolutionName(k).Equals(candidate, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>Finds the solution that owns a file, by project directory when known to the index, else by solution directory.</summary>

@@ -205,7 +205,7 @@ public sealed class BalalaikaTools(QueryService query)
     [McpServerTool(Name = "forget_solution", Destructive = true, Idempotent = true), Description(
         "Remove a solution from the known list: unload it (even if pinned) and delete its rows from the index. A solution whose file still exists stays forgotten until load_solution is called with its full path, the file is created or renamed again, or the server restarts.")]
     public Task<string> ForgetSolution(
-        [Description("Solution name or full path.")] string solution,
+        [Description("Solution full path, exact name, or a name fragment that matches exactly one solution.")] string solution,
         CancellationToken cancellationToken = default)
     {
         return query.ForgetSolutionAsync(solution, cancellationToken);
