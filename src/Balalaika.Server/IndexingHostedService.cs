@@ -575,9 +575,15 @@ public sealed class IndexingHostedService(
         List<string> appeared = workspaces.RegisterAppearedIn(createdDirectories ?? [], options.Value.Roots).ToList();
         appeared.AddRange(workspaces.RegisterAppeared(
             classified.Where(c => c.Kind == ChangeKind.SolutionFile).Select(c => c.Path), createdPaths, options.Value.Roots));
-        if (appeared.Count > 0)
+
+        // A worktree re-created at the same path may register nothing new, yet its HEAD watcher was released when it vanished.
+        if (appeared.Count > 0 || createdPaths is { Count: > 0 } || createdDirectories is { Count: > 0 })
         {
             this.WatchWorktreeHeads();
+        }
+
+        if (appeared.Count > 0)
+        {
             classified = classified.Where(c => !appeared.Contains(c.Path, StringComparer.OrdinalIgnoreCase)).ToList();
         }
 

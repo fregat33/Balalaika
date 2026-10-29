@@ -27,7 +27,7 @@ public sealed class RepoWatcher : IDisposable
     private readonly IndexActivity? _activity;
     private readonly HashSet<string> _watchedHeads = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, (string Signature, List<FileSystemWatcher> Watchers)> _refWatchers = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, (string Head, FileSystemWatcher? Watcher)> _worktrees = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (string Head, FileSystemWatcher? Watcher, object Token)> _worktrees = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _repointGate = new();
     private bool _disposed;
     private Timer? _timer;
@@ -61,6 +61,7 @@ public sealed class RepoWatcher : IDisposable
         }
 
         string reported = Path.Combine(worktreeRoot, ".git", "HEAD");
+        object token = new();
         lock (this._gate)
         {
             if (this._disposed || !this._watchedHeads.Add(files.Head))
@@ -68,7 +69,7 @@ public sealed class RepoWatcher : IDisposable
                 return false;
             }
 
-            this._worktrees[worktreeRoot] = (files.Head, null);
+            this._worktrees[worktreeRoot] = (files.Head, null, token);
         }
 
         FileSystemWatcher headWatcher = this.CreateWatcher(
@@ -89,15 +90,20 @@ public sealed class RepoWatcher : IDisposable
                 }
             },
             onGone: () => this.UnwatchWorktreeHead(worktreeRoot));
+        this.BeforeHeadPublishForTests?.Invoke(worktreeRoot);
         bool published;
         lock (this._gate)
         {
-            // Unwatched (or disposed) while the watcher was being created: nothing may keep it.
-            published = !this._disposed && this._worktrees.TryGetValue(worktreeRoot, out (string Head, FileSystemWatcher? Watcher) entry) && entry.Head == files.Head;
+            // Unwatched (or disposed) while the watcher was being created, possibly watched again by another call
+            // (same Head, other token): nothing may keep it.
+            published = !this._disposed
+                && this._worktrees.TryGetValue(worktreeRoot, out (string Head, FileSystemWatcher? Watcher, object Token) entry)
+                && ReferenceEquals(entry.Token, token)
+                && entry.Watcher is null;
             if (published)
             {
                 this._watchers.Add(headWatcher);
-                this._worktrees[worktreeRoot] = (files.Head, headWatcher);
+                this._worktrees[worktreeRoot] = (files.Head, headWatcher, token);
             }
         }
 
@@ -124,7 +130,7 @@ public sealed class RepoWatcher : IDisposable
         string head;
         lock (this._gate)
         {
-            if (!this._worktrees.Remove(worktreeRoot, out (string Head, FileSystemWatcher? Watcher) entry))
+            if (!this._worktrees.Remove(worktreeRoot, out (string Head, FileSystemWatcher? Watcher, object Token) entry))
             {
                 return false;
             }
@@ -307,6 +313,9 @@ public sealed class RepoWatcher : IDisposable
             }
         }
     }
+
+    /// <summary>Called with the root after a HEAD watcher was created and before it is published; for tests.</summary>
+    public Action<string>? BeforeHeadPublishForTests { get; set; }
 
     /// <summary>Runs the re-point path of <paramref name="root"/> (as a HEAD or ref event would); for tests.</summary>
     public void RepointForTests(string root)

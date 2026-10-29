@@ -238,6 +238,62 @@ public sealed class SlotReadyTests
     }
 
     [GitFact]
+    public async Task Worktree_UnwatchedAndWatchedAgainWhileTheWatcherIsBeingCreated_LeavesNoOrphanedWatcher()
+    {
+        // Arrange
+        await using Host host = new(warmUp: false);
+        host.CreateRepoWithWorktree();
+        using RepoWatcher watcher = new(_ => { }, TimeSpan.FromMilliseconds(100), NullLogger.Instance);
+        int baseline = watcher.WatcherCountForTests;
+        watcher.WatchWorktreeHead(host.Slot).Should().BeTrue();
+        int watching = watcher.WatcherCountForTests;
+        watcher.UnwatchWorktreeHead(host.Slot).Should().BeTrue();
+        watcher.WatcherCountForTests.Should().Be(baseline);
+
+        // Act: an unwatch and a new watch of the same root complete while the first watch is creating its HEAD watcher
+        watcher.BeforeHeadPublishForTests = root =>
+        {
+            watcher.BeforeHeadPublishForTests = null;
+            watcher.UnwatchWorktreeHead(root);
+            watcher.WatchWorktreeHead(root);
+        };
+        watcher.WatchWorktreeHead(host.Slot);
+
+        // Assert: only the second registration's watchers are alive, and the unwatch releases all of them
+        watcher.WatcherCountForTests.Should().Be(watching);
+        watcher.UnwatchWorktreeHead(host.Slot).Should().BeTrue();
+        watcher.WatcherCountForTests.Should().Be(baseline);
+    }
+
+    [GitFact]
+    public async Task Worktree_RemovedAndAddedBackToBack_IsWatchedAgainAndFollowsItsNextCommit()
+    {
+        // Arrange
+        await using Host host = new(warmUp: true);
+        host.CreateRepoWithWorktree();
+        await host.StartAsync();
+        string old = host.Git(host.Slot, "rev-parse", "HEAD").Trim();
+        (await WaitUntilAsync(() => host.IsReadyWithHead(host.SlotSolution, old))).Should().BeTrue(host.Status());
+        int watching = host.WatcherCount;
+
+        // Act: removed and re-created before the watcher batch is processed
+        host.Git(host.Repo, "worktree", "remove", "--force", host.Slot);
+        host.Git(host.Repo, "worktree", "add", host.Slot, "main");
+
+        // Assert: its HEAD, loose-ref and packed-refs watchers are back
+        (await WaitUntilAsync(() => host.WatcherCount == watching)).Should().BeTrue($"watchers: {host.WatcherCount}, before removal: {watching}");
+
+        // Act: a commit in the re-created worktree
+        File.WriteAllText(Path.Combine(host.Slot, "extra.txt"), "x");
+        host.Git(host.Slot, "add", ".");
+        host.Git(host.Slot, "commit", "-m", "next");
+        string next = host.Git(host.Slot, "rev-parse", "HEAD").Trim();
+
+        // Assert
+        (await WaitUntilAsync(() => host.IsReadyWithHead(host.SlotSolution, next))).Should().BeTrue(host.Status());
+    }
+
+    [GitFact]
     public async Task NormalRepository_ABranchMovedByUpdateRef_UpdatesTheRecordedHead()
     {
         // Arrange: main checked out in the only checkout

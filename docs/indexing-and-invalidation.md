@@ -114,7 +114,9 @@ When a worktree goes away (`git worktree remove`, or its directory is deleted) t
 `packed-refs` watchers: either its solutions are forgotten and none is left under that root, or the `HEAD` watcher fails
 because its git directory vanished (on Windows `Access is denied`). Neither case logs a warning or schedules a full
 reconcile (a buffer overflow of the `HEAD` watcher still does). A worktree created again at the same path is watched
-again the next time solutions appear, so a checkout in it updates the recorded head.
+again the next time solutions appear, so a checkout in it updates the recorded head. Every batch with created paths or
+created directories re-checks the worktree `HEAD` watchers, so a worktree removed and re-created at the same path within
+one batch (no solution is forgotten or newly registered) is watched again too.
 
 ### Project reload on git and overflow batches
 
