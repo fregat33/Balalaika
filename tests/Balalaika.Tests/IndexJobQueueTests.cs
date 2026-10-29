@@ -24,6 +24,43 @@ public sealed class IndexJobQueueTests
     }
 
     [Fact]
+    public async Task Enqueue_ScopedReconciles_MergeIntoOneJobWithTheUnionOfRoots()
+    {
+        // Arrange
+        IndexJobQueue queue = new();
+
+        // Act
+        Task first = queue.Enqueue(new FullReconcileJob([@"C:\a"]));
+        Task second = queue.Enqueue(new FullReconcileJob([@"C:\b", @"C:\A"]));
+
+        // Assert
+        queue.Pending.Should().Be(1);
+        second.Should().BeSameAs(first);
+        await using IAsyncEnumerator<QueuedJob> consumer = queue.ReadAllAsync(CancellationToken.None).GetAsyncEnumerator();
+        (await consumer.MoveNextAsync()).Should().BeTrue();
+        ((FullReconcileJob)consumer.Current.Job).Roots.Should().BeEquivalentTo([@"C:\a", @"C:\b"]);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Enqueue_AllRootsReconcileAndAScopedOne_BecomeAllRoots(bool scopedFirst)
+    {
+        // Arrange
+        IndexJobQueue queue = new();
+
+        // Act
+        _ = queue.Enqueue(scopedFirst ? new FullReconcileJob([@"C:\a"]) : new FullReconcileJob(null));
+        _ = queue.Enqueue(scopedFirst ? new FullReconcileJob(null) : new FullReconcileJob([@"C:\a"]));
+
+        // Assert
+        queue.Pending.Should().Be(1);
+        await using IAsyncEnumerator<QueuedJob> consumer = queue.ReadAllAsync(CancellationToken.None).GetAsyncEnumerator();
+        (await consumer.MoveNextAsync()).Should().BeTrue();
+        ((FullReconcileJob)consumer.Current.Job).Roots.Should().BeNull();
+    }
+
+    [Fact]
     public async Task Enqueue_WhenQueuedReconcileWasHandedToConsumer_QueuesANewOne()
     {
         // Arrange: the consumer has taken the first reconcile and may already be half-way through the disk

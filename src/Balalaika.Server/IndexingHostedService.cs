@@ -67,7 +67,7 @@ public sealed class IndexingHostedService(
         };
 
         this._watcher = new RepoWatcher(
-            batch => jobs.Enqueue(batch.Overflowed ? new FullReconcileJob() : new FileChangesJob(batch.Paths, batch.CreatedPaths, batch.CreatedDirectories)),
+            this.EnqueueBatch,
             TimeSpan.FromMilliseconds(Math.Max(100, opts.DebounceMilliseconds)),
             logger,
             opts.IgnoredFolders,
@@ -372,6 +372,35 @@ public sealed class IndexingHostedService(
         }
     }
 
+    /// <summary>
+    /// A global overflow becomes a reconcile of everything (its paths are dropped, the reconcile sees them anyway). An
+    /// overflow of some roots becomes a reconcile of those roots plus a file-change job for the paths outside them.
+    /// </summary>
+    private void EnqueueBatch(ChangeBatch batch)
+    {
+        if (batch.OverflowedGlobally)
+        {
+            _ = jobs.Enqueue(new FullReconcileJob(null));
+            return;
+        }
+
+        if (!batch.Overflowed)
+        {
+            _ = jobs.Enqueue(new FileChangesJob(batch.Paths, batch.CreatedPaths, batch.CreatedDirectories));
+            return;
+        }
+
+        IReadOnlyCollection<string> roots = batch.OverflowedRoots!;
+        bool Outside(string p) => !roots.Any(r => RepoWatcher.IsUnder(p, r));
+        string[] paths = batch.Paths.Where(Outside).ToArray();
+        string[] createdDirectories = (batch.CreatedDirectories ?? []).Where(Outside).ToArray();
+        _ = jobs.Enqueue(new FullReconcileJob(roots));
+        if (paths.Length > 0 || createdDirectories.Length > 0)
+        {
+            _ = jobs.Enqueue(new FileChangesJob(paths, (batch.CreatedPaths ?? []).Where(Outside).ToArray(), createdDirectories));
+        }
+    }
+
     /// <summary>Marks the unloaded solutions a change belongs to for a later refresh. Loaded solutions are handled directly by the caller.</summary>
     private void RecordUnloadedChanges(IEnumerable<string> solutionPaths, IEnumerable<string> changedPaths)
     {
@@ -506,16 +535,19 @@ public sealed class IndexingHostedService(
                 workspaces.ForgetMissing();
                 break;
 
-            case FullReconcileJob:
+            case FullReconcileJob full:
                 // The watcher lost events: vanished solutions are forgotten and new ones (a copied repository creates
-                // many files at once, which is what overflows) are found by a fresh scan of the roots.
+                // many files at once, which is what overflows) are found by a fresh scan of the roots. A scoped job
+                // (full.Roots) scans and reconciles only what lies under those roots.
                 workspaces.ForgetMissing();
-                workspaces.Rediscover(options.Value.Roots);
+                IReadOnlyCollection<string>? scope = full.Roots?.Select(r => Path.GetFullPath(r)).ToArray();
+                workspaces.Rediscover(scope ?? options.Value.Roots);
                 this.WatchWorktreeHeads();
-                _ = await this.ReconcileOrReloadLoadedAsync(ct).ConfigureAwait(false);
+                bool InScope(string solutionPath) => scope is null || scope.Any(r => RepoWatcher.IsUnder(solutionPath, r));
+                _ = await this.ReconcileOrReloadLoadedAsync(ct, InScope).ConfigureAwait(false);
 
                 // The watcher lost events; anything unloaded may have changed too. The freshness check makes an unneeded refresh cheap.
-                this.RecordUnloadedChanges(workspaces.KnownSolutions, []);
+                this.RecordUnloadedChanges(workspaces.KnownSolutions.Where(InScope), []);
                 break;
 
             case ReloadSolutionJob reload:
@@ -529,11 +561,16 @@ public sealed class IndexingHostedService(
     /// files differ from what they were at its load is reloaded, the others are reconciled with the disk.
     /// Returns the solutions that were reloaded.
     /// </summary>
-    private async Task<HashSet<string>> ReconcileOrReloadLoadedAsync(CancellationToken ct)
+    private async Task<HashSet<string>> ReconcileOrReloadLoadedAsync(CancellationToken ct, Func<string, bool>? inScope = null)
     {
         HashSet<string> reloaded = new(StringComparer.OrdinalIgnoreCase);
         foreach (LoadedSolution l in workspaces.Loaded)
         {
+            if (inScope is not null && !inScope(l.SolutionPath))
+            {
+                continue;
+            }
+
             IReadOnlyList<string> changedProjectFiles = l.ChangedProjectFiles();
             if (changedProjectFiles.Count > 0)
             {

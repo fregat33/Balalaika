@@ -5,12 +5,18 @@ namespace Balalaika.Watcher;
 
 /// <param name="CreatedPaths">The subset of <paramref name="Paths"/> that was reported as created or as the target of a rename.</param>
 /// <param name="CreatedDirectories">Existing directories reported as created or as the target of a rename (a folder moved into a root raises no events for its content).</param>
-public sealed record ChangeBatch(IReadOnlyCollection<string> Paths, bool Overflowed, IReadOnlyCollection<string>? CreatedPaths = null, IReadOnlyCollection<string>? CreatedDirectories = null);
+/// <param name="Overflowed">True when events were dropped, under the <paramref name="OverflowedRoots"/> or (when that is empty) anywhere.</param>
+/// <param name="OverflowedRoots">The configured roots whose watcher overflowed; empty with <paramref name="Overflowed"/> set means the overflow could not be attributed to a root.</param>
+public sealed record ChangeBatch(IReadOnlyCollection<string> Paths, bool Overflowed, IReadOnlyCollection<string>? CreatedPaths = null, IReadOnlyCollection<string>? CreatedDirectories = null, IReadOnlyCollection<string>? OverflowedRoots = null)
+{
+    /// <summary>An overflow that is not limited to <see cref="OverflowedRoots"/>: everything must be reconciled.</summary>
+    public bool OverflowedGlobally => this.Overflowed && (this.OverflowedRoots is null || this.OverflowedRoots.Count == 0);
+}
 
 /// <summary>
 /// One FileSystemWatcher per repository root. Events are filtered by <see cref="ChangeClassifier"/>, debounced, and
-/// emitted as a batch. A buffer overflow is reported as a batch with <c>Overflowed</c> set so the consumer can fall
-/// back to a full reconcile.
+/// emitted as a batch. A buffer overflow is reported as a batch with <c>Overflowed</c> set (and the configured roots
+/// that overflowed) so the consumer can fall back to a reconcile of those roots, or of everything.
 /// </summary>
 public sealed class RepoWatcher : IDisposable
 {
@@ -33,6 +39,9 @@ public sealed class RepoWatcher : IDisposable
     private Timer? _timer;
     private DateTime _firstEventUtc;
     private bool _overflowed;
+    private bool _overflowedGlobally;
+    private readonly HashSet<string> _overflowedRoots = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> _roots = [];
 
     /// <param name="ignoredFolders">Folder names whose events are dropped before debouncing, in addition to build output and git internals.</param>
     /// <param name="activity">Receives the number of events held back by the debouncer, for the readiness line of <c>status</c>.</param>
@@ -192,8 +201,16 @@ public sealed class RepoWatcher : IDisposable
                 return;
             }
 
-            this._logger.LogWarning(e.GetException(), "Git ref watcher error for {Root}; scheduling full reconcile", root);
-            this.OnOverflow();
+            string? configured = this.ConfiguredRootContaining(root);
+            this._logger.LogWarning(e.GetException(), "Git ref watcher error for {Root}; scheduling reconcile of {Scope}", root, configured ?? "all roots");
+            if (configured is null)
+            {
+                this.OnOverflow();
+            }
+            else
+            {
+                this.OnOverflow(configured);
+            }
         };
         watcher.EnableRaisingEvents = true;
         return watcher;
@@ -314,6 +331,36 @@ public sealed class RepoWatcher : IDisposable
         }
     }
 
+    /// <summary>The longest configured root that contains <paramref name="path"/> (or equals it); null when none does.</summary>
+    private string? ConfiguredRootContaining(string path)
+    {
+        lock (this._gate)
+        {
+            string? best = null;
+            foreach (string r in this._roots)
+            {
+                if (IsUnder(path, r) && (best is null || r.Length > best.Length))
+                {
+                    best = r;
+                }
+            }
+
+            return best;
+        }
+    }
+
+    /// <summary>The root a watcher error of <paramref name="path"/> (a worktree or repository root) is attributed to; for tests.</summary>
+    public string? ConfiguredRootForTests(string path) => this.ConfiguredRootContaining(path);
+
+    /// <summary>True when <paramref name="path"/> equals <paramref name="root"/> or lies below it (full paths, case-insensitive).</summary>
+    public static bool IsUnder(string path, string root)
+    {
+        string full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string r = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return full.Equals(r, StringComparison.OrdinalIgnoreCase)
+            || (full + Path.DirectorySeparatorChar).StartsWith(r + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>Called with the root after a HEAD watcher was created and before it is published; for tests.</summary>
     public Action<string>? BeforeHeadPublishForTests { get; set; }
 
@@ -362,11 +409,16 @@ public sealed class RepoWatcher : IDisposable
         };
         watcher.Error += (_, e) =>
         {
-            this._logger.LogWarning(e.GetException(), "File watcher overflow under {Root}; scheduling full reconcile", root);
-            this.OnOverflow();
+            this._logger.LogWarning(e.GetException(), "File watcher overflow under {Root}; scheduling reconcile of that root", root);
+            this.OnOverflow(root);
         };
         watcher.EnableRaisingEvents = true;
         this._watchers.Add(watcher);
+        lock (this._gate)
+        {
+            this._roots.Add(root);
+        }
+
         this._logger.LogInformation("Watching {Root}", root);
     }
 
@@ -427,7 +479,15 @@ public sealed class RepoWatcher : IDisposable
     /// goes through the same quiet period as ordinary events, so a burst of overflow notifications (a large checkout
     /// raises one per watcher buffer) produces one batch, not one per notification. Public so tests can drive it.
     /// </summary>
-    public void OnOverflow()
+    public void OnOverflow() => this.RecordOverflow(null);
+
+    /// <summary>
+    /// Like <see cref="OnOverflow()"/> for the watcher of one configured <paramref name="root"/>: the batch names the
+    /// root, so the consumer reconciles only what lies under it. Roots overflowing in the same quiet period are merged.
+    /// </summary>
+    public void OnOverflow(string root) => this.RecordOverflow(root);
+
+    private void RecordOverflow(string? root)
     {
         lock (this._gate)
         {
@@ -439,6 +499,15 @@ public sealed class RepoWatcher : IDisposable
             }
 
             this._overflowed = true;
+            if (root is null)
+            {
+                this._overflowedGlobally = true;
+            }
+            else
+            {
+                this._overflowedRoots.Add(root);
+            }
+
             this.PublishBuffered();
         }
 
@@ -466,11 +535,15 @@ public sealed class RepoWatcher : IDisposable
                 return;
             }
 
-            batch = new ChangeBatch(this._pending.ToArray(), this._overflowed, this._created.ToArray(), this._createdDirectories.ToArray());
+            // A global overflow covers every root, so the roots are dropped (an empty list with Overflowed means global).
+            string[] roots = this._overflowedGlobally ? [] : this._overflowedRoots.ToArray();
+            batch = new ChangeBatch(this._pending.ToArray(), this._overflowed, this._created.ToArray(), this._createdDirectories.ToArray(), roots);
             this._pending.Clear();
             this._created.Clear();
             this._createdDirectories.Clear();
             this._overflowed = false;
+            this._overflowedGlobally = false;
+            this._overflowedRoots.Clear();
         }
 
         try

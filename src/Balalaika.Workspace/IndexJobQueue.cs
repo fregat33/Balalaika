@@ -25,7 +25,8 @@ public sealed record ForgetSolutionJob(string Hint) : IndexJob
 public sealed record ForgetMissingJob : IndexJob;
 
 /// <summary>Compare every loaded solution with the disk (git checkout, watcher overflow), forget vanished solutions and find new ones.</summary>
-public sealed record FullReconcileJob : IndexJob;
+/// <param name="Roots">Full paths of the configured roots to rediscover and reconcile (a watcher overflow under them); null means all roots.</param>
+public sealed record FullReconcileJob(IReadOnlyCollection<string>? Roots = null) : IndexJob;
 
 /// <summary>Reload a solution from MSBuild because project or solution files changed.</summary>
 public sealed record ReloadSolutionJob(string SolutionPath, IReadOnlyCollection<string> ChangedProjectFiles) : IndexJob;
@@ -40,7 +41,8 @@ public sealed class QueuedJob
         this.Job = job;
     }
 
-    public IndexJob Job { get; }
+    /// <summary>Replaced only by the queue, under its gate, while the job is still waiting (a coalesced reconcile widens its roots).</summary>
+    public IndexJob Job { get; internal set; }
 
     public Task Completion => this._completion.Task;
 
@@ -71,15 +73,25 @@ public sealed class IndexJobQueue
     /// <summary>
     /// Queues a job. The returned task completes when the consumer has processed it (successfully or not); callers may
     /// ignore it. A <see cref="FullReconcileJob"/> is coalesced: while one is queued and not yet started, further ones
-    /// return its completion instead of adding to the queue, since a reconcile that has not begun will see every change
-    /// the later request was raised for. One that is already running does not absorb new requests.
+    /// return its completion instead of adding to the queue, after widening it to the union of the roots (null, all roots,
+    /// absorbs everything), since a reconcile that has not begun will see every change the later request was raised for.
+    /// One that is already running does not absorb new requests.
     /// </summary>
     public Task Enqueue(IndexJob job)
     {
         lock (this._gate)
         {
-            if (job is FullReconcileJob && this._queuedReconcile is { } waiting)
+            if (job is FullReconcileJob request && this._queuedReconcile is { } waiting)
             {
+                FullReconcileJob current = (FullReconcileJob)waiting.Job;
+                if (current.Roots is not null)
+                {
+                    IReadOnlyCollection<string>? merged = request.Roots is null
+                        ? null
+                        : current.Roots.Union(request.Roots, StringComparer.OrdinalIgnoreCase).ToArray();
+                    waiting.Job = current with { Roots = merged };
+                }
+
                 return waiting.Completion;
             }
 

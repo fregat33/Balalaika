@@ -433,6 +433,48 @@ public sealed class SlotReadyTests
         host.Workspaces.TryGetLoaded(a, out _).Should().BeTrue();
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Overflow_OfOneRoot_ReloadsOnlyTheSolutionsUnderIt(bool scoped)
+    {
+        // Arrange
+        await using Host host = new(warmUp: false, secondRoot: true);
+        string a = host.CreatePlainSolution(host.Root, "SolA");
+        string b = host.CreatePlainSolution(host.Root2, "SolB");
+        await host.StartAsync();
+        await WaitUntilAsync(() => host.Workspaces.KnownSolutions.Count == 2);
+        await host.LoadAsync(a, b);
+
+        // Act: both project files change, the watcher of root 1 (or of every root) loses events
+        string changed = "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><Compile Include=\"X.cs\" /></ItemGroup></Project>";
+        File.WriteAllText(Path.Combine(Path.GetDirectoryName(a)!, "Demo.csproj"), changed);
+        File.WriteAllText(Path.Combine(Path.GetDirectoryName(b)!, "Demo.csproj"), changed);
+        await host.Jobs.Enqueue(new FullReconcileJob(scoped ? [host.Root] : null)).WaitAsync(Timeout);
+
+        // Assert
+        host.LoadCount(a).Should().Be(2);
+        host.LoadCount(b).Should().Be(scoped ? 1 : 2);
+    }
+
+    [Fact]
+    public async Task Overflow_OfOneRoot_DoesNotRegisterANewSolutionUnderTheOtherRoot()
+    {
+        // Arrange
+        await using Host host = new(warmUp: false, secondRoot: true);
+        host.CreatePlainSolution(host.Root, "SolA");
+        await host.StartAsync();
+
+        // Act: a solution appears under root 2 and only root 1 is reconciled
+        string fresh = host.CreatePlainSolution(host.Root2, "SolNew");
+        await host.Jobs.Enqueue(new FullReconcileJob([host.Root])).WaitAsync(Timeout);
+
+        // Assert
+        host.Workspaces.KnownSolutions.Should().NotContain(s => s.Equals(fresh, StringComparison.OrdinalIgnoreCase));
+        await host.Jobs.Enqueue(new FullReconcileJob(null)).WaitAsync(Timeout);
+        host.Workspaces.KnownSolutions.Should().Contain(s => s.Equals(fresh, StringComparison.OrdinalIgnoreCase));
+    }
+
     [Fact]
     public async Task Overflow_ANewPropsFileBesideTheProject_ReloadsTheSolution()
     {
@@ -603,12 +645,13 @@ public sealed class SlotReadyTests
         private readonly QueryService _query;
         private readonly CancellationTokenSource _stop = new();
 
-        public Host(bool warmUp, int unloadedRefreshSeconds = 0)
+        public Host(bool warmUp, int unloadedRefreshSeconds = 0, bool secondRoot = false)
         {
             this.Root = Path.GetFullPath(TestWorkspace.NewTempDir());
+            this.Root2 = Path.GetFullPath(TestWorkspace.NewTempDir());
             BalalaikaOptions opts = new()
             {
-                Roots = [this.Root],
+                Roots = secondRoot ? [this.Root, this.Root2] : [this.Root],
                 WarmUp = warmUp,
                 UnloadedRefreshSeconds = unloadedRefreshSeconds,
                 DiscoverySweepSeconds = 0,
@@ -653,6 +696,9 @@ public sealed class SlotReadyTests
 
         public string Root { get; }
 
+        /// <summary>A second temp folder; a root of the service only when the host was created with <c>secondRoot</c>.</summary>
+        public string Root2 { get; }
+
         public string Repo => Path.Combine(this.Root, "r");
 
         public string Slot => Path.Combine(this.Root, "slot");
@@ -690,9 +736,11 @@ public sealed class SlotReadyTests
             (await WaitUntilAsync(() => this.Status().Contains("Ready: yes") && solutions.All(s => this._index.GetProjects().Any(p => p.SolutionPath.Equals(s, StringComparison.OrdinalIgnoreCase))))).Should().BeTrue(this.Status());
         }
 
-        public string CreatePlainSolution(string name)
+        public string CreatePlainSolution(string name) => this.CreatePlainSolution(this.Root, name);
+
+        public string CreatePlainSolution(string root, string name)
         {
-            string dir = Path.Combine(this.Root, name);
+            string dir = Path.Combine(root, name);
             Directory.CreateDirectory(dir);
             WriteSolutionFiles(dir);
             return Path.Combine(dir, "Demo.slnx");
