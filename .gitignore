@@ -25,3 +25,4 @@ balalaika.local.json
 # Private planning notes, kept out of the public repository
 docs/roadmap.md
 tasks/
+*.stackdump
