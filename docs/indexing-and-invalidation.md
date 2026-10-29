@@ -86,11 +86,18 @@ Blobs no tree row references are deleted at startup once `last_used_at` is older
 | anything else under `.git/`, `bin/`, `obj/`, `node_modules/`, `.vs/`, `TestResults/` | Ignored | dropped before debouncing |
 
 Debounce: 500 ms quiet period, forced flush after about 3 s of continuous activity. A `FileSystemWatcher` buffer
-overflow (64 KB buffer) is reported as a batch flagged `Overflowed`, which the consumer treats like a `HEAD` change.
+overflow (64 KB buffer) is reported as a batch flagged `Overflowed` that names the configured roots whose watcher
+overflowed (`OverflowedRoots`). The consumer enqueues a `FullReconcileJob` for just those roots: only the solutions under
+them are rediscovered and reconciled, and solutions under other roots are left alone (a task build under the workspace
+root does not reload the solutions of the repositories root). The batch's paths that are not under an overflowed root
+still go out as an ordinary file-change job. An overflow that cannot be attributed to a configured root is global
+(`OverflowedRoots` empty) and enqueues `FullReconcileJob(null)`, a reconcile of everything; so does a global
+notification mixed into a scoped batch.
 Overflow notifications go through the same quiet period as ordinary events, so the burst a large checkout raises (one
 per filled buffer) becomes one batch. As a second guard, `IndexJobQueue` coalesces a `FullReconcileJob` into one that
-is already queued and not yet started; a reconcile that is already running does not absorb new requests, because it may
-have passed the files that changed after it began.
+is already queued and not yet started: the waiting job takes the union of the roots (a `null` request, meaning all
+roots, absorbs everything) and the caller shares its completion. A reconcile that is already running does not absorb
+new requests, because it may have passed the files that changed after it began.
 
 ### Linked git worktrees
 
@@ -113,15 +120,18 @@ consumers are unchanged.
 When a worktree goes away (`git worktree remove`, or its directory is deleted) the server releases its `HEAD`, ref and
 `packed-refs` watchers: either its solutions are forgotten and none is left under that root, or the `HEAD` watcher fails
 because its git directory vanished (on Windows `Access is denied`). Neither case logs a warning or schedules a full
-reconcile (a buffer overflow of the `HEAD` watcher still does). A worktree created again at the same path is watched
-again the next time solutions appear, so a checkout in it updates the recorded head.
+reconcile (a buffer overflow of the `HEAD` watcher still does, scoped to the longest configured root that contains the
+worktree or repository root, or global when no configured root does). A worktree created again at the same path is watched
+again the next time solutions appear, so a checkout in it updates the recorded head. Every batch with created paths or
+created directories re-checks the worktree `HEAD` watchers, so a worktree removed and re-created at the same path within
+one batch (no solution is forgotten or newly registered) is watched again too.
 
 ### Project reload on git and overflow batches
 
 A solution keeps the last-write time and size of its solution file, its project files, the `.props`/`.targets` beside a
 project and the build-wide files (`Directory.Build.*`, `Directory.Packages.props`, `packages.lock.json`, `global.json`,
 `nuget.config`) in or above a project directory, recorded when it was loaded. On a Git batch and on an overflowed batch
-(`FullReconcileJob`) every loaded solution whose files differ (changed, appeared or vanished) is reloaded, which indexes
+(`FullReconcileJob`, limited to the solutions under the overflowed roots unless it is global) every loaded solution whose files differ (changed, appeared or vanished) is reloaded, which indexes
 it again; the others are only reconciled. A branch switch that adds a `Compile` item or a `.props` import therefore
 no longer leaves the loaded compilation stale.
 
