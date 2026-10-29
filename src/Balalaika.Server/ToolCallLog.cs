@@ -25,7 +25,13 @@ public static class ToolCallLog
     private const string None = "-";
 
     public static string FormatArguments(IEnumerable<KeyValuePair<string, JsonElement>>? arguments) =>
-        arguments is null ? string.Empty : string.Join(' ', arguments.Select(a => $"{a.Key}={FormatValue(a.Value)}"));
+        arguments is null ? string.Empty : string.Join(' ', arguments.Select(a => $"{FormatKey(a.Key)}={FormatValue(a.Value)}"));
+
+    /// <summary>A plain identifier (<c>[A-Za-z0-9_]+</c>, at most 120 characters) as is; any other key, even an empty one, cut and quoted like a value.</summary>
+    public static string FormatKey(string key) =>
+        key.Length is > 0 and <= ArgumentLimit && key.All(c => c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '_')
+            ? key
+            : Quote(Cut(key, ArgumentLimit));
 
     /// <summary><c>"name version"</c> in quotes, or <c>-</c> when the client did not identify itself.</summary>
     public static string Client(Implementation? client) =>

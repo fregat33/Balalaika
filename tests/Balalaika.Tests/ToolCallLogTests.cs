@@ -52,6 +52,34 @@ public sealed class ToolCallLogTests
     }
 
     [Fact]
+    public void FormatArguments_QuotesAndEscapesKeysThatAreNotPlainIdentifiers()
+    {
+        string formatted = ToolCallLog.FormatArguments(Args("""{"a b":1,"a=b":2,"x\"y":3,"k\nl":4,"":5,"ok_1":6}"""));
+
+        formatted.Should().Be("\"a b\"=1 \"a=b\"=2 \"x\\\"y\"=3 \"k\\nl\"=4 \"\"=5 ok_1=6");
+        formatted.Should().NotContainAny("\n", "\r");
+    }
+
+    [Fact]
+    public void FormatArguments_CutsALongKeyTo120CharactersAndAnEllipsis()
+    {
+        string formatted = ToolCallLog.FormatArguments(Args($$"""{"{{new string('x', 130)}}":1}"""));
+
+        formatted.Should().Be($"\"{new string('x', 120)}…\"=1");
+    }
+
+    // The rejected-call warning is written by the filter in Program.cs, which PartServer does not use; this checks
+    // the rendering of the received keys that line joins.
+    [Fact]
+    public void FormatKey_JoinedForTheRejectedCallWarning_IsEscapedAndOnOneLine()
+    {
+        string joined = string.Join(", ", new[] { "a b", "k\nl" }.Select(ToolCallLog.FormatKey));
+
+        joined.Should().Be("\"a b\", \"k\\nl\"");
+        $"[{joined}]".Should().Be("[\"a b\", \"k\\nl\"]").And.NotContain("\n");
+    }
+
+    [Fact]
     public void Client_EscapesQuotesInTheName()
     {
         ToolCallLog.Client(new Implementation { Name = "cli \"x\"", Version = "1" }).Should().Be("\"cli \\\"x\\\" 1\"");

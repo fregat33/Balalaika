@@ -74,7 +74,8 @@ search_symbols pattern="UpgradeCase" limit=20 found=18 client="claude-code 2.1.3
 - `part`: the `part` values joined by `;`, or `-`;
 - elapsed milliseconds.
 
-Quoted values (string arguments, `client`, `caller`, `part`) escape `"` as `\"`, `\` as `\\`, and CR and LF as `\r`
+Argument keys that are not plain identifiers (`[A-Za-z0-9_]+`) are quoted and escaped like values (cut to 120
+characters first), also in the "Rejected ... call with arguments" warning. Quoted values (string arguments, `client`, `caller`, `part`) escape `"` as `\"`, `\` as `\\`, and CR and LF as `\r`
 and `\n`, so the line stays one line and can be split back into fields. Values are cut first and escaped after, so the
 first characters stay recognisable and the visible length is the limit plus the escapes.
 

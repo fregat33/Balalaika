@@ -97,7 +97,7 @@ builder.Services
             }
             else if (ToolArgumentCheck.Describe(call.Name, tool.ProtocolTool.InputSchema, received) is { } problem)
             {
-                toolCallLogger?.LogWarning("Rejected {Tool} call with arguments [{Arguments}]: {Problem}", call.Name, string.Join(", ", received), problem);
+                toolCallLogger?.LogWarning("Rejected {Tool} call with arguments [{Arguments}]: {Problem}", call.Name, string.Join(", ", received.Select(ToolCallLog.FormatKey)), problem);
                 CallToolResult rejected = new() { IsError = true, Content = [new TextContentBlock { Text = problem }] };
                 LogToolCall(request, call, rejected, 0);
                 return rejected;
