@@ -446,10 +446,16 @@ public sealed class WorkspaceManager(IndexStore index, PendingRefreshes pendingR
 
         IReadOnlyList<string> known = this.KnownSolutions;
         string candidate = hint.Trim();
-        string? exact = MatchExact(known, candidate);
-        if (exact is not null)
+        string? byPath = MatchPath(known, candidate);
+        if (byPath is not null)
         {
-            return [exact];
+            return [byPath];
+        }
+
+        List<string> byName = known.Where(k => SolutionDiscovery.SolutionName(k).Equals(candidate, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (byName.Count > 0)
+        {
+            return byName;
         }
 
         return known.Where(k => SolutionDiscovery.SolutionName(k).Contains(candidate, StringComparison.OrdinalIgnoreCase)).ToList();
@@ -462,6 +468,12 @@ public sealed class WorkspaceManager(IndexStore index, PendingRefreshes pendingR
     }
 
     private static string? MatchExact(IReadOnlyList<string> known, string candidate)
+    {
+        return MatchPath(known, candidate)
+            ?? known.FirstOrDefault(k => SolutionDiscovery.SolutionName(k).Equals(candidate, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string? MatchPath(IReadOnlyList<string> known, string candidate)
     {
         string? byPath = known.FirstOrDefault(k => k.Equals(candidate, StringComparison.OrdinalIgnoreCase));
         if (byPath is not null)
@@ -491,7 +503,7 @@ public sealed class WorkspaceManager(IndexStore index, PendingRefreshes pendingR
             }
         }
 
-        return known.FirstOrDefault(k => SolutionDiscovery.SolutionName(k).Equals(candidate, StringComparison.OrdinalIgnoreCase));
+        return null;
     }
 
     /// <summary>Finds the solution that owns a file, by project directory when known to the index, else by solution directory.</summary>

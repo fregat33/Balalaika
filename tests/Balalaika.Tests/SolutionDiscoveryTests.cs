@@ -355,6 +355,59 @@ public sealed class SolutionDiscoveryTests : IDisposable
         await consumer.Awaiting(c => c).Should().ThrowAsync<OperationCanceledException>();
     }
 
+    [Fact]
+    public async Task ForgetSolutionAsync_AnExactNameSharedBySeveralSolutions_ForgetsNothing_AndAFullPathForgetsOne()
+    {
+        // Arrange
+        string path1 = this.MakeSolutionIn("one", "Acme.Orders");
+        string path2 = this.MakeSolutionIn("two", "Acme.Orders");
+        this._workspaces.RegisterSolutions([path1, path2]);
+        IndexJobQueue jobs = new();
+        QueryService query = this.CreateQuery(jobs);
+        using CancellationTokenSource stop = new();
+        Task consumer = Task.Run(async () =>
+        {
+            await foreach (QueuedJob queued in jobs.ReadAllAsync(stop.Token))
+            {
+                if (queued.Job is ForgetSolutionJob forget)
+                {
+                    forget.Result.TrySetResult(this._workspaces.Forget(forget.Hint));
+                }
+
+                jobs.MarkCompleted(queued);
+            }
+        });
+
+        // Act
+        string ambiguous = await query.ForgetSolutionAsync("Acme.Orders", CancellationToken.None);
+        IReadOnlyList<string> knownAfterAmbiguous = this._workspaces.KnownSolutions;
+        string byPath = await query.ForgetSolutionAsync(path2, CancellationToken.None);
+        stop.Cancel();
+
+        // Assert
+        ambiguous.Should().Be($"Ambiguous solution: Acme.Orders matches Acme.Orders ({path1}), Acme.Orders ({path2}). Use the full path.");
+        knownAfterAmbiguous.Should().BeEquivalentTo([path1, path2]);
+        byPath.Should().Be($"Forgot Acme.Orders ({path2}): 0 projects removed from the index.");
+        this._workspaces.KnownSolutions.Should().BeEquivalentTo([path1]);
+        await consumer.Awaiting(c => c).Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task ForgetSolutionAsync_APaddedFragmentMatchingSeveralSolutions_NamesTheTrimmedHint()
+    {
+        // Arrange
+        string orders = this.MakeSolution("Acme.Orders");
+        string billing = this.MakeSolution("Acme.Billing");
+        this._workspaces.RegisterSolutions([orders, billing]);
+        QueryService query = this.CreateQuery(new IndexJobQueue());
+
+        // Act
+        string answer = await query.ForgetSolutionAsync("  Acme ", CancellationToken.None);
+
+        // Assert
+        answer.Should().StartWith("Ambiguous solution: Acme matches ").And.EndWith(". Use the full path or the exact name.");
+    }
+
     // ---------------------------------------------------------------- re-discovery, .sln wins
 
     [Fact]
@@ -487,6 +540,15 @@ public sealed class SolutionDiscoveryTests : IDisposable
     private string MakeSolution(string name)
     {
         string dir = Path.Combine(this._root, name);
+        Directory.CreateDirectory(dir);
+        string path = Path.Combine(dir, name + ".sln");
+        File.WriteAllText(path, "");
+        return path;
+    }
+
+    private string MakeSolutionIn(string parent, string name)
+    {
+        string dir = Path.Combine(this._root, parent, name);
         Directory.CreateDirectory(dir);
         string path = Path.Combine(dir, name + ".sln");
         File.WriteAllText(path, "");
