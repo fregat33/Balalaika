@@ -387,7 +387,9 @@ rows (and with them blobs, symbols, references, relations) from the index. Answe
 answers `Unknown solution: ...`. `solution` is resolved among the visible solutions in this order: exact full path
 (either separator), exact name (case-insensitive), then a name fragment. A fragment that matches two or more solutions
 forgets nothing and answers `Ambiguous solution: Acme matches Acme.Orders (<path>), Acme.Billing (<path>). Use the full
-path or the exact name.`; an exact name wins over longer names that contain it. A blank `solution` forgets nothing.
+path or the exact name.`; an exact name wins over longer names that contain it, but an exact name shared by several
+solutions (for example the same `.sln` in two roots or in a checkout and a worktree) is refused too, with `... Use the
+full path.`; a full path forgets exactly that solution. A blank `solution` forgets nothing.
 Annotated destructive. If the solution file still exists it stays forgotten until
 `load_solution` is called with its full path, a create or rename event for the file arrives, or the server restarts.
 Solutions whose file disappears are forgotten automatically, and `*.sln` / `*.slnx` files that appear under a root are

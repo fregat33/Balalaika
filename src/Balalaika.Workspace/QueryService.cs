@@ -1536,7 +1536,10 @@ public sealed class QueryService(
         IReadOnlyList<string> candidates = workspaces.ResolveForForget(solution);
         if (candidates.Count > 1)
         {
-            return $"Ambiguous solution: {solution} matches {string.Join(", ", candidates.Select(p => $"{SolutionDiscovery.SolutionName(p)} ({p})"))}. Use the full path or the exact name.";
+            string hint = solution.Trim();
+            bool sameName = candidates.All(p => SolutionDiscovery.SolutionName(p).Equals(hint, StringComparison.OrdinalIgnoreCase));
+            return $"Ambiguous solution: {hint} matches {string.Join(", ", candidates.Select(p => $"{SolutionDiscovery.SolutionName(p)} ({p})"))}. "
+                + (sameName ? "Use the full path." : "Use the full path or the exact name.");
         }
 
         ForgetSolutionJob job = new(candidates.Count == 1 ? candidates[0] : "");
