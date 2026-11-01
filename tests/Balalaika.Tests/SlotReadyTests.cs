@@ -266,6 +266,36 @@ public sealed class SlotReadyTests
     }
 
     [GitFact]
+    public async Task Worktree_LateGoneEventOfASupersededHeadWatcher_DoesNotReleaseTheNewerRegistration()
+    {
+        // Arrange
+        await using Host host = new(warmUp: false);
+        host.CreateRepoWithWorktree();
+        using RepoWatcher watcher = new(_ => { }, TimeSpan.FromMilliseconds(100), NullLogger.Instance);
+        int baseline = watcher.WatcherCountForTests;
+        watcher.WatchWorktreeHead(host.Slot).Should().BeTrue();
+        Action? gone1 = watcher.HeadGoneForTests(host.Slot);
+        gone1.Should().NotBeNull();
+        watcher.UnwatchWorktreeHead(host.Slot).Should().BeTrue();
+        watcher.HeadGoneForTests(host.Slot).Should().BeNull();
+        watcher.WatchWorktreeHead(host.Slot).Should().BeTrue();
+        int n = watcher.WatcherCountForTests;
+
+        // Act: the first watcher delivers its Error late
+        gone1!();
+
+        // Assert
+        watcher.WatcherCountForTests.Should().Be(n);
+        Action? gone2 = watcher.HeadGoneForTests(host.Slot);
+        gone2.Should().NotBeNull();
+
+        // Act: the current registration's own callback still releases it
+        gone2!();
+        watcher.WatcherCountForTests.Should().Be(baseline);
+        watcher.HeadGoneForTests(host.Slot).Should().BeNull();
+    }
+
+    [GitFact]
     public async Task Worktree_RemovedAndAddedBackToBack_IsWatchedAgainAndFollowsItsNextCommit()
     {
         // Arrange

@@ -34,6 +34,7 @@ public sealed class RepoWatcher : IDisposable
     private readonly HashSet<string> _watchedHeads = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, (string Signature, List<FileSystemWatcher> Watchers)> _refWatchers = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, (string Head, FileSystemWatcher? Watcher, object Token)> _worktrees = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Action> _headGone = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _repointGate = new();
     private bool _disposed;
     private Timer? _timer;
@@ -71,6 +72,7 @@ public sealed class RepoWatcher : IDisposable
 
         string reported = Path.Combine(worktreeRoot, ".git", "HEAD");
         object token = new();
+        Action gone = () => this.ReleaseIfCurrent(worktreeRoot, token);
         lock (this._gate)
         {
             if (this._disposed || !this._watchedHeads.Add(files.Head))
@@ -79,6 +81,7 @@ public sealed class RepoWatcher : IDisposable
             }
 
             this._worktrees[worktreeRoot] = (files.Head, null, token);
+            this._headGone[worktreeRoot] = gone;
         }
 
         FileSystemWatcher headWatcher = this.CreateWatcher(
@@ -95,10 +98,10 @@ public sealed class RepoWatcher : IDisposable
                 }
                 else
                 {
-                    this.UnwatchWorktreeHead(worktreeRoot);
+                    gone();
                 }
             },
-            onGone: () => this.UnwatchWorktreeHead(worktreeRoot));
+            onGone: gone);
         this.BeforeHeadPublishForTests?.Invoke(worktreeRoot);
         bool published;
         lock (this._gate)
@@ -133,17 +136,39 @@ public sealed class RepoWatcher : IDisposable
     /// <paramref name="worktreeRoot"/>, so a worktree created again at the same path is watched again. Returns false
     /// when nothing was watched for that root.
     /// </summary>
-    public bool UnwatchWorktreeHead(string worktreeRoot)
+    public bool UnwatchWorktreeHead(string worktreeRoot) => this.Release(worktreeRoot, null);
+
+    /// <summary>Releases the registration of <paramref name="worktreeRoot"/> only while it is still the one created with <paramref name="token"/>.</summary>
+    private bool ReleaseIfCurrent(string worktreeRoot, object token) => this.Release(worktreeRoot, token);
+
+    /// <summary>The gone callback of the current HEAD registration of <paramref name="worktreeRoot"/>; null when it is not watched.</summary>
+    public Action? HeadGoneForTests(string worktreeRoot)
+    {
+        lock (this._gate)
+        {
+            return this._headGone.GetValueOrDefault(worktreeRoot);
+        }
+    }
+
+    private bool Release(string worktreeRoot, object? onlyToken)
     {
         List<FileSystemWatcher> released = [];
         string head;
         lock (this._gate)
         {
+            if (onlyToken is not null
+                && (!this._worktrees.TryGetValue(worktreeRoot, out (string Head, FileSystemWatcher? Watcher, object Token) current)
+                    || !ReferenceEquals(current.Token, onlyToken)))
+            {
+                return false;
+            }
+
             if (!this._worktrees.Remove(worktreeRoot, out (string Head, FileSystemWatcher? Watcher, object Token) entry))
             {
                 return false;
             }
 
+            this._headGone.Remove(worktreeRoot);
             head = entry.Head;
             this._watchedHeads.Remove(head);
             if (entry.Watcher is not null)
