@@ -64,7 +64,7 @@ builder.Services.AddHostedService<IndexingHostedService>();
 Microsoft.Extensions.Logging.ILogger? toolCallLogger = null;
 
 builder.Services
-    .AddMcpServer(o => o.ServerInfo = new Implementation { Name = "balalaika", Version = "0.1.0" })
+    .AddMcpServer(o => o.ServerInfo = new Implementation { Name = "balalaika", Version = ServerVersion.Current })
     .WithHttpTransport(o => o.Stateless = true)
     .WithTools<BalalaikaTools>()
     // Clients probe for prompts and resources after initialize; the server has none, so say so instead of
