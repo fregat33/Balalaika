@@ -135,6 +135,11 @@ project and the build-wide files (`Directory.Build.*`, `Directory.Packages.props
 it again; the others are only reconciled. A branch switch that adds a `Compile` item or a `.props` import therefore
 no longer leaves the loaded compilation stale.
 
+A load also records when it started. Project files whose last write is at or after that moment were written while MSBuild
+was reading them, so the compilation may come from half-written files, and the stamps (taken after the load) would not
+show it. They are listed as changed during the load, and the daemon reloads the solution once more for them: only once,
+a second racing load is kept with a warning, and a load without such files starts the count again.
+
 ### Indexed HEAD
 
 After an `IndexSolutionJob`, a reconcile, a reload and the "index is fresh" branch of the warm-up and refresh, the server

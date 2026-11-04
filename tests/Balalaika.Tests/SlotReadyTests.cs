@@ -548,6 +548,88 @@ public sealed class SlotReadyTests
         host.LoadCount(b).Should().Be(1);
     }
 
+    private static DateTime? RewriteCsprojAfterCapturingStart(string solution)
+    {
+        DateTime started = DateTime.UtcNow;
+        string csproj = Path.Combine(Path.GetDirectoryName(solution)!, "Demo.csproj");
+        File.WriteAllText(csproj, File.ReadAllText(csproj) + " ");
+        File.SetLastWriteTimeUtc(csproj, started.AddSeconds(1));
+        return started;
+    }
+
+    private static async Task DrainAsync(Host host)
+    {
+        await Task.Delay(300);
+        (await WaitUntilAsync(() => host.Jobs.Pending == 0)).Should().BeTrue("the queue drains");
+        await Task.Delay(300);
+        (await WaitUntilAsync(() => host.Jobs.Pending == 0)).Should().BeTrue("the queue drains");
+    }
+
+    [Fact]
+    public async Task Load_WhoseProjectFileIsRewrittenWhileLoading_IsReloadedOnce()
+    {
+        // Arrange
+        await using Host host = new(warmUp: false);
+
+        // The solution is outside the watched root: the rewrite must not also reach the reload through the file watcher.
+        host.CreatePlainSolution("Dummy");
+        string a = host.CreatePlainSolution(host.Root2, "SolA");
+        bool first = true;
+        host.LoadStartHook = s =>
+        {
+            if (!first)
+            {
+                return null;
+            }
+
+            first = false;
+            return RewriteCsprojAfterCapturingStart(s);
+        };
+        await host.StartAsync();
+        host.Workspaces.RegisterSolutions([a]);
+
+        // Act
+        await host.LoadAsync(a);
+        await DrainAsync(host);
+
+        // Assert
+        host.LoadCount(a).Should().Be(2);
+        host.ServiceLog.Lines.Count(l => l.StartsWith("Information: Demo: 1 project files changed while it was loading; reloading once", StringComparison.Ordinal)).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Load_WhoseProjectFilesKeepChanging_IsReloadedOnlyOnce()
+    {
+        // Arrange
+        await using Host host = new(warmUp: false);
+        host.CreatePlainSolution("Dummy");
+        string a = host.CreatePlainSolution(host.Root2, "SolA");
+        host.LoadStartHook = RewriteCsprojAfterCapturingStart;
+        await host.StartAsync();
+        host.Workspaces.RegisterSolutions([a]);
+        string csproj = Path.Combine(Path.GetDirectoryName(a)!, "Demo.csproj");
+
+        // Act
+        await host.LoadAsync(a);
+        await DrainAsync(host);
+
+        // Assert
+        host.LoadCount(a).Should().Be(2, "the second racing load is kept");
+        host.ServiceLog.Lines.Count(l => l.StartsWith("Warning: Demo: project files changed again during the re-load", StringComparison.Ordinal)).Should().Be(1);
+
+        // A normal reload settles the generation, so the next racing load is reloaded once more.
+        host.LoadStartHook = null;
+        await host.Jobs.Enqueue(new ReloadSolutionJob(a, [csproj])).WaitAsync(Timeout);
+        await DrainAsync(host);
+        host.LoadCount(a).Should().Be(3);
+
+        host.LoadStartHook = RewriteCsprojAfterCapturingStart;
+        await host.Jobs.Enqueue(new ReloadSolutionJob(a, [csproj])).WaitAsync(Timeout);
+        await DrainAsync(host);
+        host.LoadCount(a).Should().Be(5);
+        host.ServiceLog.Lines.Count(l => l.StartsWith("Warning: Demo: project files changed again during the re-load", StringComparison.Ordinal)).Should().Be(2);
+    }
+
     // ---------------------------------------------------------------- readiness
 
     [Fact]
@@ -624,6 +706,23 @@ public sealed class SlotReadyTests
             {
                 this._warnings.Enqueue(formatter(state, exception));
             }
+        }
+    }
+
+    private sealed class RecordingLog : ILogger<IndexingHostedService>
+    {
+        private readonly ConcurrentQueue<string> _lines = new();
+
+        public IReadOnlyCollection<string> Lines => this._lines;
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            this._lines.Enqueue(logLevel + ": " + formatter(state, exception));
         }
     }
 
@@ -708,7 +807,7 @@ public sealed class SlotReadyTests
                 options,
                 filter,
                 git,
-                NullLogger<IndexingHostedService>.Instance);
+                this.ServiceLog);
             this._query = new QueryService(
                 this.Workspaces,
                 new SymbolResolver(this.Workspaces, this._index, options),
@@ -723,6 +822,15 @@ public sealed class SlotReadyTests
                 NullLogger<QueryService>.Instance,
                 activity);
         }
+
+        /// <summary>What the hosted service logged, as <c>Level: message</c>.</summary>
+        public RecordingLog ServiceLog { get; } = new();
+
+        /// <summary>
+        /// Called at the start of every load with the solution path; it may rewrite files and returns the moment the load
+        /// is said to have started (<c>null</c>: not recorded). Unset: loads do not record it.
+        /// </summary>
+        public Func<string, DateTime?>? LoadStartHook { get; set; }
 
         public string Root { get; }
 
@@ -862,10 +970,11 @@ public sealed class SlotReadyTests
         private Task<LoadedSolution> LoadFromDisk(string solutionPath, CancellationToken ct)
         {
             this._loads.AddOrUpdate(solutionPath, 1, (_, n) => n + 1);
+            DateTime? loadStarted = this.LoadStartHook?.Invoke(solutionPath);
             string dir = Path.GetDirectoryName(solutionPath)!;
             (string, string)[] documents = Directory.EnumerateFiles(dir, "*.cs").Select(f => (Path.GetFileName(f), File.ReadAllText(f))).ToArray();
             (AdhocWorkspace workspace, _) = TestWorkspace.CreateProject(dir, "Demo", documents);
-            return Task.FromResult(new LoadedSolution(workspace, workspace.CurrentSolution, solutionPath, []));
+            return Task.FromResult(new LoadedSolution(workspace, workspace.CurrentSolution, solutionPath, [], loadStarted));
         }
     }
 }

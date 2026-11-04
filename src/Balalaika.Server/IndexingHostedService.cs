@@ -30,7 +30,39 @@ public sealed class IndexingHostedService(
     private readonly Channel<string> _immediateRefreshes = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
     private readonly HashSet<string> _immediateQueued = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _solutionRoots = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _raceReloaded = new(StringComparer.OrdinalIgnoreCase);
     private RepoWatcher? _watcher;
+
+    /// <summary>
+    /// A load whose project files were written while MSBuild was reading them may hold a compilation built from
+    /// half-written files, and its stamps (taken afterwards) would never show it. Reload once more; never a loop.
+    /// </summary>
+    private void RecheckProjectFilesChangedDuringLoad(LoadedSolution loaded)
+    {
+        string path = loaded.SolutionPath;
+        IReadOnlyList<string> changed = loaded.ProjectFilesChangedDuringLoad;
+        bool first;
+        lock (this._raceReloaded)
+        {
+            if (changed.Count == 0)
+            {
+                this._raceReloaded.Remove(path);
+                return;
+            }
+
+            first = this._raceReloaded.Add(path);
+        }
+
+        if (first)
+        {
+            logger.LogInformation("{Solution}: {Count} project files changed while it was loading; reloading once", loaded.Name, changed.Count);
+            jobs.Enqueue(new ReloadSolutionJob(path, changed));
+        }
+        else
+        {
+            logger.LogWarning("{Solution}: project files changed again during the re-load; keeping this load (reindex force=true or the next change reloads it)", loaded.Name);
+        }
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -59,10 +91,19 @@ public sealed class IndexingHostedService(
 
         // Every load indexes the solution once. The job's completion is kept per solution so a caller that needs the
         // index (the warm-up) awaits this job instead of queueing a second, redundant walk behind it.
-        workspaces.SolutionLoaded += loaded => this._loadIndexing[loaded.SolutionPath] = jobs.Enqueue(new IndexSolutionJob(loaded.SolutionPath, Force: false));
+        workspaces.SolutionLoaded += loaded =>
+        {
+            this._loadIndexing[loaded.SolutionPath] = jobs.Enqueue(new IndexSolutionJob(loaded.SolutionPath, Force: false));
+            this.RecheckProjectFilesChangedDuringLoad(loaded);
+        };
         workspaces.SolutionForgotten += forgotten =>
         {
             this._loadIndexing.TryRemove(forgotten.Path, out _);
+            lock (this._raceReloaded)
+            {
+                this._raceReloaded.Remove(forgotten.Path);
+            }
+
             this.UnwatchWorktreeHeadOf(forgotten.Path);
         };
 

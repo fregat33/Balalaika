@@ -37,7 +37,7 @@ public sealed class LoadedSolution : IDisposable
         }
     }
 
-    public LoadedSolution(Microsoft.CodeAnalysis.Workspace? workspace, Solution solution, string solutionPath, IReadOnlyList<string> loadDiagnostics)
+    public LoadedSolution(Microsoft.CodeAnalysis.Workspace? workspace, Solution solution, string solutionPath, IReadOnlyList<string> loadDiagnostics, DateTime? loadStartedUtc = null)
     {
         this._workspace = workspace;
         this._solution = solution;
@@ -47,7 +47,23 @@ public sealed class LoadedSolution : IDisposable
         this.LastUsedUtc = this.LoadedAtUtc;
         (this._excludedByProject, this._excluded) = ComputeExcludedSourceFiles(solution);
         this._projectFileStamps = StampProjectFiles(solutionPath, solution);
+        if (loadStartedUtc is { } started)
+        {
+            List<string> during = this._projectFileStamps.Where(s => s.Value.Ticks >= started.Ticks).Select(s => s.Key).ToList();
+            during.Sort(StringComparer.OrdinalIgnoreCase);
+            this.ProjectFilesChangedDuringLoad = during;
+        }
+        else
+        {
+            this.ProjectFilesChangedDuringLoad = [];
+        }
     }
+
+    /// <summary>
+    /// The project files (see <see cref="ChangedProjectFiles"/>) whose last write is at or after the moment the load
+    /// started: MSBuild may have read them half written. Empty when the load start was not recorded.
+    /// </summary>
+    public IReadOnlyList<string> ProjectFilesChangedDuringLoad { get; }
 
     private static readonly string[] ProjectFileNames =
     [
@@ -203,7 +219,7 @@ public sealed class LoadedSolution : IDisposable
         };
 
         Solution solution = await workspace.OpenSolutionAsync(solutionPath, cancellationToken: cancellationToken).ConfigureAwait(false);
-        return new LoadedSolution(workspace, solution, solutionPath, failures)
+        return new LoadedSolution(workspace, solution, solutionPath, failures, started)
         {
             LoadDuration = DateTime.UtcNow - started,
         };
