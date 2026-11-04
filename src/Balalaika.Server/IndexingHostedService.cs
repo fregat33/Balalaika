@@ -605,10 +605,16 @@ public sealed class IndexingHostedService(
     private async Task<HashSet<string>> ReconcileOrReloadLoadedAsync(CancellationToken ct, Func<string, bool>? inScope = null)
     {
         HashSet<string> reloaded = new(StringComparer.OrdinalIgnoreCase);
-        foreach (LoadedSolution l in workspaces.Loaded)
+        foreach (LoadedSolution l in workspaces.Loaded.ToList())
         {
             if (inScope is not null && !inScope(l.SolutionPath))
             {
+                continue;
+            }
+
+            if (!File.Exists(l.SolutionPath))
+            {
+                workspaces.ForgetMissing();
                 continue;
             }
 
@@ -783,19 +789,33 @@ public sealed class IndexingHostedService(
             return;
         }
 
-        if (options.Value.RestoreOnProjectChange)
+        if (!File.Exists(reload.SolutionPath))
         {
-            foreach (string projectFile in reload.ChangedProjectFiles.Where(p => p.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) && File.Exists(p)))
-            {
-                logger.LogInformation("Restoring {Project}", projectFile);
-                await WorkspaceManager.RunDotnetAsync($"restore \"{projectFile}\" --nologo", TimeSpan.FromMinutes(5), logger).ConfigureAwait(false);
-            }
+            workspaces.ForgetMissing();
+            return;
         }
 
-        logger.LogInformation("Reloading {Solution} after project file changes", SolutionDiscovery.SolutionName(reload.SolutionPath));
-        string? head = await this.ReadHeadAsync(reload.SolutionPath, ct).ConfigureAwait(false);
-        await workspaces.ReloadAsync(reload.SolutionPath, ct).ConfigureAwait(false);
-        this.RecordHead(reload.SolutionPath, head);
+        try
+        {
+            if (options.Value.RestoreOnProjectChange)
+            {
+                foreach (string projectFile in reload.ChangedProjectFiles.Where(p => p.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) && File.Exists(p)))
+                {
+                    logger.LogInformation("Restoring {Project}", projectFile);
+                    await WorkspaceManager.RunDotnetAsync($"restore \"{projectFile}\" --nologo", TimeSpan.FromMinutes(5), logger).ConfigureAwait(false);
+                }
+            }
+
+            logger.LogInformation("Reloading {Solution} after project file changes", SolutionDiscovery.SolutionName(reload.SolutionPath));
+            string? head = await this.ReadHeadAsync(reload.SolutionPath, ct).ConfigureAwait(false);
+            await workspaces.ReloadAsync(reload.SolutionPath, ct).ConfigureAwait(false);
+            this.RecordHead(reload.SolutionPath, head);
+        }
+        catch (FileNotFoundException) when (!File.Exists(reload.SolutionPath))
+        {
+            workspaces.ForgetMissing();
+            logger.LogInformation("{Solution} vanished during its reload; forgotten", SolutionDiscovery.SolutionName(reload.SolutionPath));
+        }
     }
 
     /// <summary>Compares every document of a loaded solution with the disk and applies the differences, then indexes.</summary>

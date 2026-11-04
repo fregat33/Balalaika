@@ -133,7 +133,8 @@ project and the build-wide files (`Directory.Build.*`, `Directory.Packages.props
 `nuget.config`) in or above a project directory, recorded when it was loaded. On a Git batch and on an overflowed batch
 (`FullReconcileJob`, limited to the solutions under the overflowed roots unless it is global) every loaded solution whose files differ (changed, appeared or vanished) is reloaded, which indexes
 it again; the others are only reconciled. A branch switch that adds a `Compile` item or a `.props` import therefore
-no longer leaves the loaded compilation stale.
+no longer leaves the loaded compilation stale. A loaded solution whose solution file is gone (a removed worktree) is
+forgotten in that step rather than reloaded.
 
 A load also records when it started. Project files whose last write is at or after that moment were written while MSBuild
 was reading them, so the compilation may come from half-written files, and the stamps (taken after the load) would not

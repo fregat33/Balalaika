@@ -4,6 +4,7 @@
 
 ### Fixed
 - A solution whose project files were written while MSBuild was loading it is reloaded once more, so a half-written file no longer leaves a broken compilation.
+- A loaded solution whose solution file vanished (a removed worktree) is forgotten instead of reloaded, with no `Failed to load` or `Index job failed` error and the rest of the file-change batch still processed.
 
 ## 0.2.0 - 2026-11-01
 

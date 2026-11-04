@@ -656,7 +656,15 @@ public sealed class WorkspaceManager(IndexStore index, PendingRefreshes pendingR
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to load {Solution}", solutionPath);
+            if (ex is FileNotFoundException && !File.Exists(solutionPath))
+            {
+                logger.LogWarning("Solution file gone before {Solution} could load", solutionPath);
+            }
+            else
+            {
+                logger.LogError(ex, "Failed to load {Solution}", solutionPath);
+            }
+
             if (this.IsCurrentLoad(solutionPath, self))
             {
                 this._failures[solutionPath] = ex.Message;

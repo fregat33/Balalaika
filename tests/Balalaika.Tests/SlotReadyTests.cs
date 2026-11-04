@@ -548,6 +548,56 @@ public sealed class SlotReadyTests
         host.LoadCount(b).Should().Be(1);
     }
 
+    [Fact]
+    public async Task GitBatch_ForALoadedSolutionWhoseFolderWasDeleted_ForgetsItAndProcessesTheRestOfTheBatch()
+    {
+        // Arrange
+        await using Host host = new(warmUp: false);
+        string a = host.CreatePlainSolution("SolA");
+        string b = host.CreatePlainSolution("SolB");
+        await host.StartAsync();
+        await host.LoadAsync(a, b);
+        string dirA = Path.GetDirectoryName(a)!;
+        string csprojA = Path.Combine(dirA, "Demo.csproj");
+        string csprojB = Path.Combine(Path.GetDirectoryName(b)!, "Demo.csproj");
+        string head = Path.Combine(dirA, ".git", "HEAD");
+        Directory.Delete(dirA, true);
+        FileInfo info = new(csprojB);
+        DateTime stamp = info.LastWriteTimeUtc;
+        File.WriteAllText(csprojB, File.ReadAllText(csprojB).Replace("Microsoft", "Microsofx"));
+        File.SetLastWriteTimeUtc(csprojB, stamp);
+
+        // Act
+        await host.Jobs.Enqueue(new FileChangesJob([head, csprojA, csprojB])).WaitAsync(Timeout);
+
+        // Assert
+        host.Workspaces.IsKnown(a).Should().BeFalse();
+        host.LoadCount(a).Should().Be(1);
+        host.LoadCount(b).Should().Be(2, "the rest of the batch is still processed");
+        host.ServiceLog.Lines.Should().NotContain(l => l.StartsWith("Error:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ReloadJob_ForASolutionWhoseFileVanished_ForgetsItWithoutAnError()
+    {
+        // Arrange
+        await using Host host = new(warmUp: false);
+        string a = host.CreatePlainSolution("SolA");
+        await host.StartAsync();
+        await host.LoadAsync(a);
+        string csproj = Path.Combine(Path.GetDirectoryName(a)!, "Demo.csproj");
+        File.Delete(a);
+
+        // Act
+        await host.Jobs.Enqueue(new ReloadSolutionJob(a, [csproj])).WaitAsync(Timeout);
+
+        // Assert
+        host.Workspaces.IsKnown(a).Should().BeFalse();
+        host.LoadCount(a).Should().Be(1);
+        host.ServiceLog.Lines.Should().NotContain(l => l.StartsWith("Error:", StringComparison.Ordinal));
+        host.ServiceLog.Lines.Count(l => l.StartsWith("Information: Solution file gone, forgot", StringComparison.Ordinal)).Should().Be(1);
+    }
+
     private static DateTime? RewriteCsprojAfterCapturingStart(string solution)
     {
         DateTime started = DateTime.UtcNow;
@@ -709,7 +759,7 @@ public sealed class SlotReadyTests
         }
     }
 
-    private sealed class RecordingLog : ILogger<IndexingHostedService>
+    private sealed class RecordingLog : ILogger<IndexingHostedService>, ILogger<WorkspaceManager>
     {
         private readonly ConcurrentQueue<string> _lines = new();
 
@@ -791,7 +841,7 @@ public sealed class SlotReadyTests
             PendingRefreshes pending = new();
             IndexActivity activity = new();
             this._index = new IndexStore(Path.Combine(this._state, "index.db"));
-            this.Workspaces = new WorkspaceManager(this._index, pending, options, NullLogger<WorkspaceManager>.Instance) { Loader = this.LoadFromDisk };
+            this.Workspaces = new WorkspaceManager(this._index, pending, options, this.ServiceLog) { Loader = this.LoadFromDisk };
             this.Jobs = new IndexJobQueue();
             SourceFilter filter = new([]);
             GitRepository git = new(options, NullLogger<GitRepository>.Instance);
