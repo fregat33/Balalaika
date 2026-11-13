@@ -469,7 +469,7 @@ public sealed class SlotReadyTests
     public async Task Overflow_OfOneRoot_ReloadsOnlyTheSolutionsUnderIt(bool scoped)
     {
         // Arrange
-        await using Host host = new(warmUp: false, secondRoot: true);
+        await using Host host = new(warmUp: false, secondRoot: true, debounceMilliseconds: 600_000);
         string a = host.CreatePlainSolution(host.Root, "SolA");
         string b = host.CreatePlainSolution(host.Root2, "SolB");
         await host.StartAsync();
@@ -491,7 +491,7 @@ public sealed class SlotReadyTests
     public async Task Overflow_OfOneRoot_DoesNotRegisterANewSolutionUnderTheOtherRoot()
     {
         // Arrange
-        await using Host host = new(warmUp: false, secondRoot: true);
+        await using Host host = new(warmUp: false, secondRoot: true, debounceMilliseconds: 600_000);
         host.CreatePlainSolution(host.Root, "SolA");
         await host.StartAsync();
 
@@ -824,7 +824,7 @@ public sealed class SlotReadyTests
         private readonly QueryService _query;
         private readonly CancellationTokenSource _stop = new();
 
-        public Host(bool warmUp, int unloadedRefreshSeconds = 0, bool secondRoot = false)
+        public Host(bool warmUp, int unloadedRefreshSeconds = 0, bool secondRoot = false, int debounceMilliseconds = 100)
         {
             this.Root = Path.GetFullPath(TestWorkspace.NewTempDir());
             this.Root2 = Path.GetFullPath(TestWorkspace.NewTempDir());
@@ -834,7 +834,7 @@ public sealed class SlotReadyTests
                 WarmUp = warmUp,
                 UnloadedRefreshSeconds = unloadedRefreshSeconds,
                 DiscoverySweepSeconds = 0,
-                DebounceMilliseconds = 100,
+                DebounceMilliseconds = debounceMilliseconds,
                 RestoreOnProjectChange = false,
             };
             IOptions<BalalaikaOptions> options = Options.Create(opts);

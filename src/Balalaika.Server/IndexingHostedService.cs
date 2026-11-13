@@ -435,27 +435,36 @@ public sealed class IndexingHostedService(
     /// </summary>
     private void EnqueueBatch(ChangeBatch batch)
     {
+        foreach (IndexJob job in JobsFor(batch))
+        {
+            _ = jobs.Enqueue(job);
+        }
+    }
+
+    /// <summary>The jobs a batch turns into, in enqueue order (see <see cref="EnqueueBatch"/>).</summary>
+    public static IReadOnlyList<IndexJob> JobsFor(ChangeBatch batch)
+    {
         if (batch.OverflowedGlobally)
         {
-            _ = jobs.Enqueue(new FullReconcileJob(null));
-            return;
+            return [new FullReconcileJob(null)];
         }
 
         if (!batch.Overflowed)
         {
-            _ = jobs.Enqueue(new FileChangesJob(batch.Paths, batch.CreatedPaths, batch.CreatedDirectories));
-            return;
+            return [new FileChangesJob(batch.Paths, batch.CreatedPaths, batch.CreatedDirectories)];
         }
 
         IReadOnlyCollection<string> roots = batch.OverflowedRoots!;
         bool Outside(string p) => !roots.Any(r => RepoWatcher.IsUnder(p, r));
         string[] paths = batch.Paths.Where(Outside).ToArray();
         string[] createdDirectories = (batch.CreatedDirectories ?? []).Where(Outside).ToArray();
-        _ = jobs.Enqueue(new FullReconcileJob(roots));
+        List<IndexJob> result = [new FullReconcileJob(roots)];
         if (paths.Length > 0 || createdDirectories.Length > 0)
         {
-            _ = jobs.Enqueue(new FileChangesJob(paths, (batch.CreatedPaths ?? []).Where(Outside).ToArray(), createdDirectories));
+            result.Add(new FileChangesJob(paths, (batch.CreatedPaths ?? []).Where(Outside).ToArray(), createdDirectories));
         }
+
+        return result;
     }
 
     /// <summary>Marks the unloaded solutions a change belongs to for a later refresh. Loaded solutions are handled directly by the caller.</summary>
