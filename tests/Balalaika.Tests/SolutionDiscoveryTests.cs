@@ -211,6 +211,75 @@ public sealed class SolutionDiscoveryTests : IDisposable
     }
 
     [Fact]
+    public void PruneOrphanedSolutions_DeletesRowsOfAnUnknownSolutionWhoseFileIsGone_AndIsIdempotent()
+    {
+        // Arrange
+        string gone = this.MakeSolution("gone");
+        string live = this.MakeSolution("live");
+        this._index.EnsureProject(Path.Combine(this._root, "gone", "G1.csproj"), "G1", "G1", gone);
+        this._index.EnsureProject(Path.Combine(this._root, "gone", "G2.csproj"), "G2", "G2", gone);
+        this._index.EnsureProject(Path.Combine(this._root, "live", "L.csproj"), "L", "L", live);
+        this._workspaces.RegisterSolutions([live]);
+        File.Delete(gone);
+        List<ForgottenSolution> events = [];
+        this._workspaces.SolutionForgotten += events.Add;
+        int before = this._index.GetStats().Projects;
+
+        // Act
+        PruneResult first = this._workspaces.PruneOrphanedSolutions();
+        PruneResult second = this._workspaces.PruneOrphanedSolutions();
+
+        // Assert
+        first.Solutions.Should().Be(1);
+        first.Projects.Should().Be(2);
+        first.Pruned.Should().BeEquivalentTo([gone]);
+        this._index.GetStats().Projects.Should().Be(before - 2);
+        this._index.GetSolutionPaths().Should().BeEquivalentTo([live]);
+        second.Solutions.Should().Be(0);
+        second.Projects.Should().Be(0);
+        events.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void PruneOrphanedSolutions_KeepsAKnownSolutionWhoseFileIsMissing()
+    {
+        // Arrange
+        string a = this.MakeSolution("A");
+        this._index.EnsureProject(Path.Combine(this._root, "A", "A.csproj"), "A", "A", a);
+        this._workspaces.RegisterSolutions([a]);
+        File.Delete(a);
+
+        // Act
+        PruneResult result = this._workspaces.PruneOrphanedSolutions();
+
+        // Assert
+        result.Solutions.Should().Be(0);
+        this._index.GetStats().Projects.Should().Be(1);
+    }
+
+    [Fact]
+    public void PruneOrphanedSolutions_KeepsSolutionsUnderAMissingRoot_AndPrunesThoseUnderNoRoot()
+    {
+        // Arrange
+        string missingRoot = Path.Combine(Path.GetFullPath(TestWorkspace.NewTempDir()), "unmounted");
+        string rootless = Path.Combine(Path.GetFullPath(TestWorkspace.NewTempDir()), "elsewhere", "R.sln");
+        string underMissing = Path.Combine(missingRoot, "M", "M.sln");
+        using IndexStore index = new(Path.Combine(TestWorkspace.NewTempDir(), "index.db"));
+        using WorkspaceManager workspaces = new(index, new PendingRefreshes(), Options.Create(new BalalaikaOptions { Roots = [this._root, missingRoot] }), NullLogger<WorkspaceManager>.Instance);
+        index.EnsureProject(Path.Combine(missingRoot, "M", "M.csproj"), "M", "M", underMissing);
+        index.EnsureProject(Path.Combine(Path.GetDirectoryName(rootless)!, "R.csproj"), "R", "R", rootless);
+
+        // Act
+        PruneResult result = workspaces.PruneOrphanedSolutions();
+
+        // Assert
+        result.Skipped.Should().Be(1);
+        result.Solutions.Should().Be(1);
+        result.Pruned.Should().BeEquivalentTo([rootless]);
+        index.GetSolutionPaths().Should().BeEquivalentTo([underMissing]);
+    }
+
+    [Fact]
     public void RegisterAppeared_AfterForgetOfExistingFile_NeedsACreateEvent()
     {
         // Arrange

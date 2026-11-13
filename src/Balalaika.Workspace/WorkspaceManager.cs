@@ -17,6 +17,9 @@ public enum SolutionState
 
 public sealed record ForgottenSolution(string Path, string Name, int ProjectsRemoved);
 
+/// <summary>What <see cref="WorkspaceManager.PruneOrphanedSolutions"/> did: solutions and projects deleted, solutions kept because their root is missing, and the pruned paths.</summary>
+public sealed record PruneResult(int Solutions, int Projects, int Skipped, IReadOnlyList<string> Pruned, IReadOnlyDictionary<string, int> SkippedByRoot);
+
 public sealed record SolutionStatus(string Path, string Name, SolutionState State, int Projects, int Documents, DateTime? LoadedAtUtc, DateTime? LastUsedUtc, TimeSpan? LoadDuration, string? Error, bool Pinned, string? IndexedHead = null);
 
 /// <summary>
@@ -359,6 +362,60 @@ public sealed class WorkspaceManager(IndexStore index, PendingRefreshes pendingR
         }
 
         return forgotten;
+    }
+
+    /// <summary>
+    /// Deletes the index rows of every solution path the index holds that is not known and whose file no longer exists
+    /// (a worktree removed while the daemon was down). A solution under a configured root that is not a directory
+    /// (an unmounted drive) is kept and counted as skipped. Raises no <see cref="SolutionForgotten"/>.
+    /// </summary>
+    public PruneResult PruneOrphanedSolutions()
+    {
+        string[] roots = options.Value.Roots.Where(r => !string.IsNullOrWhiteSpace(r)).Select(NormalizeDir).ToArray();
+        List<string> pruned = [];
+        Dictionary<string, int> skippedByRoot = new(StringComparer.OrdinalIgnoreCase);
+        int projects = 0;
+        int skipped = 0;
+        foreach (string path in index.GetSolutionPaths())
+        {
+            if (this.IsKnown(path) || File.Exists(path))
+            {
+                continue;
+            }
+
+            string normalized = NormalizeDir(path);
+            string? root = roots
+                .Where(r => normalized.StartsWith(r, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(r => r.Length)
+                .FirstOrDefault();
+            if (root is not null && !Directory.Exists(root))
+            {
+                skipped++;
+                skippedByRoot[root.TrimEnd('/')] = skippedByRoot.GetValueOrDefault(root.TrimEnd('/')) + 1;
+                continue;
+            }
+
+            projects += index.DeleteSolution(path);
+            pruned.Add(path);
+        }
+
+        return new PruneResult(pruned.Count, projects, skipped, pruned, skippedByRoot);
+    }
+
+    /// <summary>Full path with '/' separators and a trailing '/', so a prefix test cannot match a sibling directory.</summary>
+    private static string NormalizeDir(string path)
+    {
+        string full;
+        try
+        {
+            full = Path.GetFullPath(path);
+        }
+        catch (Exception)
+        {
+            full = path;
+        }
+
+        return full.Replace('\\', '/').TrimEnd('/') + "/";
     }
 
     /// <summary>

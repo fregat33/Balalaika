@@ -202,6 +202,27 @@ public sealed class IndexStore : IDisposable
         }
     }
 
+    /// <summary>Every distinct solution path the index holds rows for, sorted, as stored; not filtered by the view.</summary>
+    public IReadOnlyList<string> GetSolutionPaths()
+    {
+        lock (this._gate)
+        {
+            using SqliteCommand cmd = this._connection.CreateCommand();
+            cmd.CommandText = "SELECT DISTINCT solution_path FROM project ORDER BY solution_path";
+            using SqliteDataReader r = cmd.ExecuteReader();
+            List<string> list = [];
+            while (r.Read())
+            {
+                if (!r.IsDBNull(0))
+                {
+                    list.Add(r.GetString(0));
+                }
+            }
+
+            return list;
+        }
+    }
+
     /// <summary>Deletes every project of a solution; blobs, symbols (and their FTS rows), references, relations, tree and package rows cascade. Returns the number of projects removed.</summary>
     public int DeleteSolution(string solutionPath)
     {

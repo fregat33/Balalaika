@@ -66,6 +66,21 @@ public sealed class IndexStoreTests : IDisposable
     }
 
     [Fact]
+    public void GetSolutionPaths_ReturnsEachDistinctSolutionPathAsStored_Sorted()
+    {
+        // Arrange
+        this._store.EnsureProject(@"C:\x\A\A.csproj", "A", "A", @"C:\x\A.sln");
+        this._store.EnsureProject(@"C:\x\A\A2.csproj", "A2", "A2", @"C:\x\A.sln");
+        this._store.EnsureProject(@"C:\x\B\B.csproj", "B", "B", @"C:\x\b.SLN");
+
+        // Act
+        IReadOnlyList<string> paths = this._store.GetSolutionPaths();
+
+        // Assert
+        paths.Should().Equal(@"C:\x\A.sln", @"C:\x\b.SLN");
+    }
+
+    [Fact]
     public void WriteBlob_WithReplace_OverwritesExistingContent()
     {
         // Arrange

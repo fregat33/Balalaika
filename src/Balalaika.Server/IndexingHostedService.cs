@@ -83,6 +83,22 @@ public sealed class IndexingHostedService(
         workspaces.RegisterSolutions(solutions);
         logger.LogInformation("Discovered {Count} solutions under {Roots}", solutions.Count, string.Join(", ", opts.Roots));
 
+        PruneResult pruneResult = workspaces.PruneOrphanedSolutions();
+        foreach ((string root, int count) in pruneResult.SkippedByRoot)
+        {
+            logger.LogWarning("Root {Root} is missing; {Count} indexed solutions under it kept", root, count);
+        }
+
+        foreach (string prunedPath in pruneResult.Pruned)
+        {
+            logger.LogDebug("Pruned index rows of {Solution}", prunedPath);
+        }
+
+        if (pruneResult.Solutions > 0)
+        {
+            logger.LogInformation("Pruned {Projects} projects of {Solutions} solutions whose file is gone", pruneResult.Projects, pruneResult.Solutions);
+        }
+
         int collected = index.CollectGarbage(TimeSpan.FromDays(Math.Max(1, opts.BlobRetentionDays)));
         if (collected > 0)
         {

@@ -268,6 +268,12 @@ work for a forgotten solution is skipped. The `forget_solution` tool does the sa
 single index consumer (as a queued job, which the tool awaits), and an index job that finishes for a solution that is no
 longer known deletes the rows it wrote, so a running index can not bring them back.
 
+At startup, after the solutions under `Roots` are registered and before the blob collection, the daemon also prunes
+index rows of solutions it never knew this run: every `solution_path` the index holds that is not known and whose file
+no longer exists (a worktree removed while the daemon was down, or before forgetting deleted rows) loses its project rows,
+and the count is logged. A solution under a configured root that is not a directory right now (an unmounted drive) is
+kept and logged once per root as a warning; a solution under no configured root is pruned when its file is missing.
+
 ## Package version drift
 
 A consumer repository may pin a shared `Acme.Contracts` package at 3.1 while its source repository is at 3.4.
