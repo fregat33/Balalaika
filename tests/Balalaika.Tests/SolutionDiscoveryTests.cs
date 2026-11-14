@@ -624,6 +624,127 @@ public sealed class SolutionDiscoveryTests : IDisposable
         return path;
     }
 
+    // ---------------------------------------------------------------- RootsOnly
+
+    private WorkspaceManager CreateRootsOnly(string[] roots)
+        => new(this._index, this._pending, Options.Create(new BalalaikaOptions { Roots = roots, RootsOnly = true }), NullLogger<WorkspaceManager>.Instance);
+
+    private QueryService CreateRootsOnlyQuery(WorkspaceManager workspaces, string[] roots)
+    {
+        IOptions<BalalaikaOptions> options = Options.Create(new BalalaikaOptions { Roots = roots, RootsOnly = true });
+        return new QueryService(
+            workspaces,
+            new SymbolResolver(workspaces, this._index, options),
+            this._index,
+            new IndexJobQueue(),
+            new ResultPager(),
+            new WarmUpTracker(),
+            this._pending,
+            options,
+            new SourceFilter([]),
+            new GitRepository(options, NullLogger<GitRepository>.Instance),
+            NullLogger<QueryService>.Instance);
+    }
+
+    [Fact]
+    public void RegisterExistingSolution_RootsOnly_OutsideTheRoots_ReturnsNull_AndRegistersNothing()
+    {
+        // Arrange
+        using WorkspaceManager workspaces = this.CreateRootsOnly([this._root]);
+        string sln = Path.Combine(Path.GetFullPath(TestWorkspace.NewTempDir()), "Outside.slnx");
+        File.WriteAllText(sln, "");
+
+        // Act
+        string? registered = workspaces.RegisterExistingSolution(sln);
+
+        // Assert
+        registered.Should().BeNull();
+        workspaces.KnownSolutions.Should().NotContain(sln);
+    }
+
+    [Fact]
+    public async Task LoadSolutionAsync_RootsOnly_OutsideTheRoots_AnswersTheRefusal_AndRegistersNothing()
+    {
+        // Arrange
+        using WorkspaceManager workspaces = this.CreateRootsOnly([this._root]);
+        QueryService query = this.CreateRootsOnlyQuery(workspaces, [this._root]);
+        string sln = Path.Combine(Path.GetFullPath(TestWorkspace.NewTempDir()), "Outside.slnx");
+        File.WriteAllText(sln, "");
+
+        // Act
+        string answer = await query.LoadSolutionAsync(sln, CancellationToken.None);
+
+        // Assert
+        answer.Should().StartWith("Outside the roots: " + sln);
+        workspaces.KnownSolutions.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void RegisterExistingSolution_RootsOnly_UnderTheRoot_RegistersIt()
+    {
+        // Arrange
+        using WorkspaceManager workspaces = this.CreateRootsOnly([this._root]);
+        string dir = Path.Combine(this._root, "deep", "er");
+        Directory.CreateDirectory(dir);
+        string sln = Path.Combine(dir, "Inside.slnx");
+        File.WriteAllText(sln, "");
+
+        // Act
+        string? registered = workspaces.RegisterExistingSolution(sln);
+
+        // Assert
+        registered.Should().Be(sln);
+    }
+
+    [Fact]
+    public void IsRefusedOutsideRoots_RootsOnly_SiblingWithSharedPrefixIsOutside_AndNonSolutionsAreNotRefused()
+    {
+        // Arrange
+        string tmp = Path.GetFullPath(TestWorkspace.NewTempDir());
+        string root = Path.Combine(tmp, "r");
+        string sibling = Path.Combine(tmp, "r2");
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(sibling);
+        string sln = Path.Combine(sibling, "Sibling.slnx");
+        string csproj = Path.Combine(sibling, "Sibling.csproj");
+        File.WriteAllText(sln, "");
+        File.WriteAllText(csproj, "");
+        using WorkspaceManager workspaces = this.CreateRootsOnly([root]);
+
+        // Act + Assert
+        workspaces.IsRefusedOutsideRoots(sln).Should().BeTrue();
+        workspaces.IsRefusedOutsideRoots(Path.Combine(sibling, "Missing.slnx")).Should().BeFalse();
+        workspaces.IsRefusedOutsideRoots(csproj).Should().BeFalse();
+        workspaces.IsRefusedOutsideRoots("Sibling").Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsRefusedOutsideRoots_RootsOnly_WithNoRoots_RefusesAnExistingSolution()
+    {
+        // Arrange
+        using WorkspaceManager workspaces = this.CreateRootsOnly([]);
+        string sln = Path.Combine(Path.GetFullPath(TestWorkspace.NewTempDir()), "Any.slnx");
+        File.WriteAllText(sln, "");
+
+        // Act + Assert
+        workspaces.IsRefusedOutsideRoots(sln).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task LoadSolutionAsync_RootsOnly_MissingPathOutsideTheRoot_StillAnswersUnknownSolution()
+    {
+        // Arrange
+        using WorkspaceManager workspaces = this.CreateRootsOnly([this._root]);
+        QueryService query = this.CreateRootsOnlyQuery(workspaces, [this._root]);
+        string missing = Path.Combine(Path.GetFullPath(TestWorkspace.NewTempDir()), "Nope.sln");
+
+        // Act
+        string answer = await query.LoadSolutionAsync(missing, CancellationToken.None);
+
+        // Assert
+        answer.Should().StartWith("Unknown solution: ");
+    }
+
     private QueryService CreateQuery(IndexJobQueue? jobs = null)
     {
         IOptions<BalalaikaOptions> options = Options.Create(new BalalaikaOptions { Roots = [this._root] });

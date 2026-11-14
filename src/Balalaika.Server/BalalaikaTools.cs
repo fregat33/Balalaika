@@ -194,7 +194,7 @@ public sealed class BalalaikaTools(QueryService query)
     }
 
     [McpServerTool(Name = "load_solution", Idempotent = true), Description(
-        "Load a solution into memory so that live queries and diagnostics are available for it. A full path to an existing .sln / .slnx that is not known yet registers it first.")]
+        "Load a solution into memory so that live queries and diagnostics are available for it. A full path to an existing .sln / .slnx that is not known yet registers it first. With RootsOnly on, a path outside the roots is refused.")]
     public Task<string> LoadSolution(
         [Description("Solution name, or full path of a .sln / .slnx file.")] string solution,
         CancellationToken cancellationToken = default)

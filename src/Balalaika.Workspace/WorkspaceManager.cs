@@ -208,20 +208,13 @@ public sealed class WorkspaceManager(IndexStore index, PendingRefreshes pendingR
     }
 
     /// <summary>
-    /// Registers an existing *.sln / *.slnx by full path, inside the roots or not, and returns its normalized path.
-    /// Null when <paramref name="candidate"/> is not a rooted path to an existing solution file.
+    /// Registers an existing *.sln / *.slnx by full path, inside the roots or not (with RootsOnly: inside the roots only),
+    /// and returns its normalized path. Null when <paramref name="candidate"/> is not a rooted path to an existing
+    /// solution file, or when RootsOnly refuses it (see <see cref="IsRefusedOutsideRoots"/>).
     /// </summary>
     public string? RegisterExistingSolution(string candidate)
     {
-        string trimmed = candidate.Trim();
-        string ext = Path.GetExtension(trimmed);
-        if (!Path.IsPathRooted(trimmed) || !(ext.Equals(".sln", StringComparison.OrdinalIgnoreCase) || ext.Equals(".slnx", StringComparison.OrdinalIgnoreCase)))
-        {
-            return null;
-        }
-
-        string full = Path.GetFullPath(trimmed);
-        if (!File.Exists(full))
+        if (!TryGetExistingSolution(candidate, out string full) || this.IsOutsideRootsAndRefused(full))
         {
             return null;
         }
@@ -239,6 +232,62 @@ public sealed class WorkspaceManager(IndexStore index, PendingRefreshes pendingR
         {
             return this._known.First(k => k.Equals(full, StringComparison.OrdinalIgnoreCase));
         }
+    }
+
+    /// <summary>
+    /// True exactly when RootsOnly is on and <paramref name="candidate"/> is a rooted path with the extension .sln / .slnx
+    /// to an existing file that lies under no root.
+    /// </summary>
+    public bool IsRefusedOutsideRoots(string candidate)
+        => TryGetExistingSolution(candidate, out string full) && this.IsOutsideRootsAndRefused(full);
+
+    private bool IsOutsideRootsAndRefused(string full)
+    {
+        if (!options.Value.RootsOnly)
+        {
+            return false;
+        }
+
+        foreach (string root in NormalizedRoots(options.Value.Roots))
+        {
+            if (full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static IEnumerable<string> NormalizedRoots(string[] roots)
+    {
+        foreach (string root in roots)
+        {
+            if (string.IsNullOrWhiteSpace(root))
+            {
+                continue;
+            }
+
+            string full = Path.GetFullPath(Environment.ExpandEnvironmentVariables(root)).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (full.Length > 0)
+            {
+                yield return full;
+            }
+        }
+    }
+
+    private static bool TryGetExistingSolution(string candidate, out string full)
+    {
+        full = string.Empty;
+        string trimmed = candidate.Trim();
+        string ext = Path.GetExtension(trimmed);
+        if (!Path.IsPathRooted(trimmed) || !(ext.Equals(".sln", StringComparison.OrdinalIgnoreCase) || ext.Equals(".slnx", StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        full = Path.GetFullPath(trimmed);
+        return File.Exists(full);
     }
 
     /// <summary>

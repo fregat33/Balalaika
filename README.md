@@ -106,6 +106,7 @@ empty.
 {
   "Balalaika": {
     "Roots": [ "C:\\src\\acme" ],
+    "RootsOnly": false,
     "IgnoredFolders": [ "Migrations" ],
     "Port": 5301,
     "Preload": [ "Acme.Orders" ],
@@ -127,6 +128,7 @@ empty.
 | Key | Meaning |
 |---|---|
 | `Roots` | folders scanned recursively for `*.sln` / `*.slnx` (build output and `.git` folders skipped) |
+| `RootsOnly` | when `true`, `load_solution` with the full path of a solution outside every root is refused and nothing is registered; `false` by default |
 | `Preload` | solutions loaded at startup and never evicted |
 | `IgnoredFolders` | folder names, matched anywhere on a file's path, whose files get no index rows and no watcher jobs and are left out of result lists; `Migrations` drops EF migrations. The files stay in the compilation so diagnostics match a real build. Empty by default |
 | `WarmUp` | after the preloads, load every other discovered solution once, index it and evict it, so index results exist for solutions nobody opened; solutions whose index already matches the disk are skipped |

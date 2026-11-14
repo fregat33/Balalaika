@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- Option `RootsOnly` (default `false`): when `true`, `load_solution` with the full path of a solution file outside every root answers `Outside the roots: ...` and registers nothing.
+
 ### Fixed
 - A solution whose project files were written while MSBuild was loading it is reloaded once more, so a half-written file no longer leaves a broken compilation.
 - A loaded solution whose solution file vanished (a removed worktree) is forgotten instead of reloaded, with no `Failed to load` or `Index job failed` error and the rest of the file-change batch still processed.

@@ -377,7 +377,8 @@ reason a cross-repository lookup comes back empty.
 Starts or joins a load and waits up to `LoadWaitSeconds`. Reports project count, load time and the number of workspace
 diagnostics. `solution` may be a known name or path, or the full path of an existing `.sln` / `.slnx` that is not known
 yet (inside the roots or not); that file is registered first. A missing path or another extension answers
-`Unknown solution: ...`.
+`Unknown solution: ...`. With `RootsOnly` on, a path outside the roots answers `Outside the roots: ...` and
+registers nothing.
 
 ### `forget_solution(solution)`
 

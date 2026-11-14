@@ -1,6 +1,7 @@
 {
   "Balalaika": {
     "Roots": [],
+    "RootsOnly": false,
     "IgnoredFolders": [],
     "Port": 5301,
     "Preload": [],

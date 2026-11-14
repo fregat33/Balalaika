@@ -5,6 +5,9 @@ public sealed class BalalaikaOptions
     /// <summary>Folders scanned recursively for *.sln / *.slnx files.</summary>
     public string[] Roots { get; set; } = [];
 
+    /// <summary>When true, load_solution with the full path of a solution outside every root is refused and nothing is registered.</summary>
+    public bool RootsOnly { get; set; }
+
     /// <summary>SQLite file. Defaults to %LOCALAPPDATA%\Balalaika\index.db.</summary>
     public string? IndexPath { get; set; }
 

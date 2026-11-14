@@ -1513,8 +1513,15 @@ public sealed class QueryService(
 
     public async Task<string> LoadSolutionAsync(string solution, CancellationToken ct)
     {
-        // A full path to an existing solution file that is not known yet (new worktree, or outside the roots) is registered first.
-        string? path = workspaces.ResolveSolution(solution) ?? workspaces.RegisterExistingSolution(solution);
+        // A full path to an existing solution file that is not known yet (new worktree, or outside the roots) is registered first,
+        // unless RootsOnly refuses a path outside the roots.
+        string? path = workspaces.ResolveSolution(solution);
+        if (path is null && workspaces.IsRefusedOutsideRoots(solution))
+        {
+            return $"Outside the roots: {Path.GetFullPath(solution.Trim())}. RootsOnly is on: this server registers solutions only under its roots.";
+        }
+
+        path ??= workspaces.RegisterExistingSolution(solution);
         if (path is null)
         {
             return $"Unknown solution: {solution}. Known: {string.Join(", ", workspaces.KnownSolutions.Select(SolutionDiscovery.SolutionName))}";
