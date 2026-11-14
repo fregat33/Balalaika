@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 - 2026-11-15
 
 ### Added
 - Option `RootsOnly` (default `false`): when `true`, `load_solution` with the full path of a solution file outside every root answers `Outside the roots: ...` and registers nothing.
