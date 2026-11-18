@@ -4,6 +4,7 @@
 
 ### Fixed
 - `find_references` on a type lists the `new T(...)` expressions that create it, and on a constructor lists target-typed `new(...)` calls; `review_changes` impact counts follow the same rule.
+- A member name that matches several overloads, without parameter types or with parameter types that match none, answers `Ambiguous symbol: ...` with the doc id of each overload instead of answering for the first one.
 
 ## 0.2.1 - 2026-11-15
 

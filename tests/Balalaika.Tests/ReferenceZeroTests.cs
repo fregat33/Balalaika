@@ -383,16 +383,17 @@ public sealed class ReferenceZeroTests : IDisposable
     }
 
     [Fact]
-    public async Task ExtensionMethodOverloaded_ByQualifiedName_Defect()
+    public async Task ExtensionMethodOverloaded_ByQualifiedName_Correct()
     {
         // Act
-        Measured m = await MeasureAsync(this._query, "Acme.Core.OrderMappings.ToView");
+        string output = await this._query.FindReferencesAsync("Acme.Core.OrderMappings.ToView", null, true, null, null, 200, CancellationToken.None);
 
-        // Assert: real usages of the OrderInfo overload 3; the name matches both overloads and the resolver takes the first
-        // declared one (SymbolResolver.PickMember), the ShipmentInfo overload, which nobody calls.
-        // The index has no row for that overload either, so QueryService.cs:212 prints no Index line at all.
-        m.Live.Should().Be(0, m.Output);
-        m.Index.Should().BeNull(m.Output);
+        // Assert: the name matches both overloads, so the answer is the refusal with both doc ids in declaration order
+        string[] lines = output.Split('\n').Select(l => l.TrimEnd('\r')).Where(l => l.Length > 0).ToArray();
+        lines.Should().Equal(
+            "Ambiguous symbol: Acme.Core.OrderMappings.ToView matches 2 overloads; pass the doc id or the parameter types:",
+            "  M:Acme.Core.OrderMappings.ToView(Acme.Core.ShipmentInfo)",
+            "  M:Acme.Core.OrderMappings.ToView(Acme.Core.OrderInfo)");
     }
 
     // ------------------------------------------------------------------ shape 5: interface member and its implementation

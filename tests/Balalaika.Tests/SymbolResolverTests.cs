@@ -142,7 +142,6 @@ public sealed class SymbolResolverTests
     [InlineData("Demo.Foo", "T:Demo.Foo")]
     [InlineData("T:Demo.Foo", "T:Demo.Foo")]
     [InlineData("Foo", "T:Demo.Foo")]
-    [InlineData("Demo.Foo.Run", "M:Demo.Foo.Run")]
     [InlineData("Demo.Foo.Run()", "M:Demo.Foo.Run")]
     [InlineData("Demo.Foo.Run(int)", "M:Demo.Foo.Run(System.Int32)")]
     [InlineData("M:Demo.Foo.Run(System.Int32)", "M:Demo.Foo.Run(System.Int32)")]
