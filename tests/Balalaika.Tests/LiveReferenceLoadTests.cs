@@ -44,14 +44,18 @@ public sealed class MsBuildFactAttribute : FactAttribute
 
 /// <summary>
 /// <c>find_references</c> answered <c>Live X: 0 references</c> on the running server for symbols with plain direct
-/// usages while <c>get_call_graph</c> listed the callers. Cause pinned here: <see cref="SymbolResolver.ResolveInSolutionAsync"/>
-/// returns the symbol from the FIRST project whose compilation resolves the name. When that project depends on the
-/// declaring one and binds a shared assembly (for example <c>Microsoft.Extensions.Options</c>, which the Web SDK
+/// usages while <c>get_call_graph</c> listed the callers. The cause was that <see cref="SymbolResolver.ResolveInSolutionAsync"/>
+/// returned the symbol from the FIRST project whose compilation resolved the name. When that project depended on the
+/// declaring one and bound a shared assembly (for example <c>Microsoft.Extensions.Options</c>, which the Web SDK
 /// framework reference and a package reference carry in different versions) to another version than the declaring
-/// project does, Roslyn hands out a <em>retargeting</em> copy of the declaring assembly: the symbol is source
+/// project did, Roslyn handed out a <em>retargeting</em> copy of the declaring assembly: the symbol is source
 /// (<c>Locations</c> are in source, so <c>IsSource</c> holds), but its assembly is a <c>NonSourceAssemblySymbol</c>
 /// that is not the one of the declaring project's own compilation, and <c>SymbolFinder.FindReferencesAsync</c> finds nothing for it.
-/// Neither the order of projects alone nor warm or cold compilations decide it (the <c>_Correct</c> tests).
+/// Now a name resolves in the declaring project: <see cref="SymbolResolver.ResolveInSolutionAsync"/> returns a source
+/// symbol only when the project's own compilation declares it (its <c>ContainingAssembly</c> is that project's own), and
+/// keeps a foreign source symbol only as a fallback when no project declares it. <c>FindTwinAsync</c> prefers the
+/// declaring project the same way. Neither the order of projects alone nor warm or cold compilations decide it (the
+/// <c>_Correct</c> tests).
 /// </summary>
 public sealed class LiveReferenceLoadTests
 {
