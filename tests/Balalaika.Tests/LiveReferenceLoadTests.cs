@@ -66,7 +66,7 @@ public sealed class LiveReferenceLoadTests
     // ------------------------------------------------------------------ the solution of this repository, real loader
 
     [MsBuildFact]
-    public async Task RealLoader_ThisRepositorySolution_FindReferencesOfAWorkspaceMemberAnswersZero_WhileTheCallGraphListsItsCallers_Defect()
+    public async Task RealLoader_ThisRepositorySolution_FindReferencesOfAWorkspaceMemberResolvesInTheDeclaringProjectAndCountsItsUsages_Correct()
     {
         // Arrange: Balalaika.slnx lists Balalaika.Server (Web SDK, references Balalaika.Workspace) before Balalaika.Workspace
         string? found = FindRepositorySolution();
@@ -89,11 +89,10 @@ public sealed class LiveReferenceLoadTests
         AssertNoCompileErrors(loaded.Solution);
 
         // Assert: the real count is at least 3 (QueryService.cs twice, CountRuleTests once; this file adds one more)
-        resolved.Project.Name.Should().Be("Balalaika.Server");
-        resolved.Symbol.ContainingAssembly.GetType().Name.Should().Be("NonSourceAssemblySymbol", "the Server compilation sees Balalaika.Workspace through a retargeting assembly");
-        refs.Should().Contain("Live Balalaika: 0 references");
-        viaResolved.Should().Be(0);
+        resolved.Project.Name.Should().Be("Balalaika.Workspace");
+        viaResolved.Should().Be(viaOwn);
         viaOwn.Should().BeGreaterThanOrEqualTo(3, "the declaring project's own symbol finds the usages");
+        refs.Should().Contain($"Live Balalaika: {viaOwn} references");
         graph.Should().Contain("Callers (");
         graph.Should().Contain(Path.Combine("src", "Balalaika.Workspace", "QueryService.cs"), "a production caller of BindsToDeclaration exists");
     }
@@ -113,14 +112,14 @@ public sealed class LiveReferenceLoadTests
         AssertNoCompileErrors(loaded.Solution);
 
         // Assert: the order of projects alone does not produce the zero
-        resolved!.Project.Name.Should().Be("App");
+        resolved!.Project.Name.Should().Be("Lib");
         refs.Should().Contain("Live Demo: 3 references");
     }
 
     // ------------------------------------------------------------------ same shape, workspace without MSBuild
 
     [Fact]
-    public async Task DependentProjectBindsAnotherVersionOfASharedAssembly_FindReferencesAnswersZero_WhileCallGraphAndSymbolFinderOnTheOwnSymbolSeeTheUsages_Defect()
+    public async Task DependentProjectBindsAnotherVersionOfASharedAssembly_NameResolvesInTheDeclaringProject_AndFindReferencesCountsEveryUsage_Correct()
     {
         // Arrange: App is listed first and references Lib; Lib binds Acme.Dep 1.0, App binds Acme.Dep 2.0
         (AdhocWorkspace workspace, LoadedSolution loaded) = Build(appFirst: true, versionSkew: true);
@@ -137,19 +136,57 @@ public sealed class LiveReferenceLoadTests
         AssertNoCompileErrors(loaded.Solution);
 
         // Assert
-        resolved.Project.Name.Should().Be("App", "SymbolResolver.cs:117-139 returns the first project that resolves the name, here the dependent");
-        resolved.IsSource.Should().BeTrue("the symbol still has source locations, so nothing falls through to the next project");
-        resolved.Symbol.ContainingAssembly.GetType().Name.Should().Be("NonSourceAssemblySymbol", "a retargeting copy of Lib's assembly");
-        SymbolEqualityComparer.Default.Equals(resolved.Symbol, own).Should().BeFalse();
+        resolved.Project.Name.Should().Be("Lib", "the name resolves in the project that declares it, not in the dependent that sees a retargeting copy");
+        resolved.IsSource.Should().BeTrue();
+        SymbolEqualityComparer.Default.Equals(resolved.Symbol, own).Should().BeTrue();
 
-        // Defect: the real count is 3 (RealUsages)
-        refs.Should().Contain("Live Demo: 0 references");
-        refs.Should().Contain("Total: 0 references");
-        viaResolved.Should().Be(0, "SymbolFinder finds no location for the retargeting symbol");
+        refs.Should().Contain($"Live Demo: {RealUsages} references");
+        viaResolved.Should().Be(RealUsages);
 
         // The declaring project's own symbol and the call graph see all of them
         viaOwn.Should().Be(RealUsages);
         graph.Should().Contain("Callers (3, live");
+        workspace.Dispose();
+    }
+
+    [Fact]
+    public async Task TwinLookup_SecondSolutionListsTheDependentFirstWithVersionSkew_AllSolutionsCountsTheUsagesInBoth_Correct()
+    {
+        // Arrange: the first solution has Lib first, the second lists App first and binds another version of Acme.Dep
+        (AdhocWorkspace w1, LoadedSolution a) = Build(appFirst: false, versionSkew: true);
+        (AdhocWorkspace w2, LoadedSolution b) = Build(appFirst: true, versionSkew: true);
+        using Server server = Server.Create();
+        server.Workspaces.Adopt(a);
+        server.Workspaces.Adopt(b);
+
+        // Act
+        string all = await server.Query.FindReferencesAsync(Spec, null, true, null, null, 50, CancellationToken.None);
+        ISymbol? twin = await SymbolResolver.FindTwinAsync("M:Acme.Lib.Pricing.Round(System.Int32)", "Lib", b, CancellationToken.None);
+
+        // Assert
+        all.Split("Live Demo: 3 references").Length.Should().Be(3, "one live block per solution, the twin in the second one included");
+        twin.Should().NotBeNull();
+        SymbolEqualityComparer.Default.Equals(twin, OwnSymbol(b.Solution)).Should().BeTrue("the twin is the symbol of the declaring project");
+        w1.Dispose();
+        w2.Dispose();
+    }
+
+    [Fact]
+    public async Task MetadataOnlySymbolStillResolves_AndAnUnknownSpecAnswersSymbolNotFound_Correct()
+    {
+        // Arrange
+        (AdhocWorkspace workspace, LoadedSolution loaded) = Build(appFirst: true, versionSkew: true);
+        using Server server = Server.Create();
+        server.Workspaces.Adopt(loaded);
+
+        // Act
+        ResolvedSymbol? framework = await SymbolResolver.ResolveInSolutionAsync("System.String", loaded, CancellationToken.None);
+        string missing = await server.Query.FindReferencesAsync("Acme.Nothing.Missing", null, false, null, null, 50, CancellationToken.None);
+
+        // Assert
+        framework.Should().NotBeNull();
+        framework!.IsSource.Should().BeFalse();
+        missing.Should().Contain("Symbol not found");
         workspace.Dispose();
     }
 
@@ -208,8 +245,8 @@ public sealed class LiveReferenceLoadTests
         ResolvedSymbol? resolved = await SymbolResolver.ResolveInSolutionAsync(Spec, loaded, CancellationToken.None);
         AssertNoCompileErrors(loaded.Solution);
 
-        // Assert: the dependent resolves the name, and the order alone does not produce the zero
-        resolved!.Project.Name.Should().Be("App");
+        // Assert: the name resolves in the declaring project, and the order alone does not produce the zero
+        resolved!.Project.Name.Should().Be("Lib");
         refs.Should().Contain("Live Demo: 3 references");
         workspace.Dispose();
     }

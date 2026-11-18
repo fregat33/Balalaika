@@ -114,6 +114,7 @@ public sealed class SymbolResolver(WorkspaceManager workspaces, IndexStore index
     public static async Task<ResolvedSymbol?> ResolveInSolutionAsync(string spec, LoadedSolution loaded, CancellationToken cancellationToken)
     {
         ResolvedSymbol? metadata = null;
+        ResolvedSymbol? foreignSource = null;
         foreach (Project project in loaded.Solution.Projects)
         {
             Compilation? compilation = await project.GetCompilationAsync(cancellationToken).ConfigureAwait(false);
@@ -133,13 +134,26 @@ public sealed class SymbolResolver(WorkspaceManager workspaces, IndexStore index
             ResolvedSymbol resolved = new(symbol, project, loaded, isSource, ambiguous);
             if (isSource)
             {
-                return resolved;
+                // A source symbol seen through a reference (a retargeting copy of the declaring assembly) is not the
+                // one SymbolFinder can search for: keep looking for the project that declares it.
+                if (DeclaredBy(symbol, compilation))
+                {
+                    return resolved;
+                }
+
+                foreignSource ??= resolved;
+                continue;
             }
 
             metadata ??= resolved;
         }
 
-        return metadata;
+        return foreignSource ?? metadata;
+    }
+
+    private static bool DeclaredBy(ISymbol symbol, Compilation compilation)
+    {
+        return symbol is INamespaceSymbol || SymbolEqualityComparer.Default.Equals(symbol.ContainingAssembly, compilation.Assembly);
     }
 
     /// <summary>
@@ -151,6 +165,7 @@ public sealed class SymbolResolver(WorkspaceManager workspaces, IndexStore index
     {
         string? wanted = SymbolIdentity.Canonical(assemblyName);
         ISymbol? fallback = null;
+        ISymbol? matching = null;
         foreach (Project project in other.Solution.Projects)
         {
             Compilation? compilation = await project.GetCompilationAsync(cancellationToken).ConfigureAwait(false);
@@ -167,13 +182,19 @@ public sealed class SymbolResolver(WorkspaceManager workspaces, IndexStore index
 
             if (wanted is null || string.Equals(SymbolIdentity.AssemblyOf(symbol), wanted, StringComparison.OrdinalIgnoreCase))
             {
-                return symbol;
+                if (DeclaredBy(symbol, compilation))
+                {
+                    return symbol;
+                }
+
+                matching ??= symbol;
+                continue;
             }
 
             fallback ??= symbol;
         }
 
-        return fallback;
+        return matching ?? fallback;
     }
 
     public static bool LooksLikeDocId(string spec)
