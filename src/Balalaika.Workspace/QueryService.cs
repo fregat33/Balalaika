@@ -55,6 +55,7 @@ public sealed class QueryService(
 
         total += await this.AppendLiveReferencesAsync(sb, r.Symbol, r.Solution, criteria, limit, ct).ConfigureAwait(false);
         liveSolutions.Add(r.Solution.SolutionPath);
+        List<LoadedSolution> answeredLive = [r.Solution];
 
         if (allSolutions)
         {
@@ -70,6 +71,7 @@ public sealed class QueryService(
                 if (twin is not null)
                 {
                     total += await this.AppendLiveReferencesAsync(sb, twin, other, criteria, limit, ct).ConfigureAwait(false);
+                    answeredLive.Add(other);
                 }
             }
 
@@ -77,6 +79,33 @@ public sealed class QueryService(
             {
                 total += this.AppendIndexReferences(sb, docId, assembly, liveSolutions, criteria, limit);
             }
+        }
+
+        List<string> reasons = [];
+        foreach (LoadedSolution answered in answeredLive)
+        {
+            IReadOnlyList<string> failures = answered.LoadFailures;
+            if (failures.Count > 0)
+            {
+                reasons.Add($"{answered.Name} had {failures.Count} load failure{(failures.Count == 1 ? "" : "s")} (first: {failures[0]})");
+            }
+        }
+
+        int pendingJobs = jobs.Pending;
+        if (pendingJobs > 0)
+        {
+            reasons.Add($"the server has {pendingJobs} index job{(pendingJobs == 1 ? "" : "s")} pending");
+        }
+
+        int buffered = activity?.Buffered ?? 0;
+        if (buffered > 0)
+        {
+            reasons.Add($"{buffered} file change{(buffered == 1 ? " waits" : "s wait")} in the watcher");
+        }
+
+        if (reasons.Count > 0)
+        {
+            sb.Append("Notice: the live answer may be incomplete: ").Append(string.Join("; ", reasons)).Append('.').AppendLine();
         }
 
         sb.Append("Total: ").Append(total).Append(" references");

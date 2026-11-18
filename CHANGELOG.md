@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- `find_references` prints a `Notice:` line before `Total:` when its live answer may be incomplete: load failures of the answering solution, pending index jobs or unapplied watcher changes.
+
 ### Fixed
 - `find_references` on a type lists the `new T(...)` expressions that create it, and on a constructor lists target-typed `new(...)` calls; `review_changes` impact counts follow the same rule.
 - A member name that matches several overloads, without parameter types or with parameter types that match none, answers `Ambiguous symbol: ...` with the doc id of each overload instead of answering for the first one.

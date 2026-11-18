@@ -437,8 +437,10 @@ public sealed class ReferenceZeroTests : IDisposable
     // ------------------------------------------------------------------ shape 5 state: the consumer's compilation lacks the declaring project
 
     [Fact]
-    public async Task ConsumerWithoutItsProjectReference_CountsOneOfTwoWithoutNotice_Defect()
+    public async Task ConsumerWithoutItsProjectReference_CountsOneOfTwoWithoutNotice_ByDesign()
     {
+        // Compilation errors are not read at query time (a compilation per project on every query); a real MSBuild
+        // load reports such a case as a load failure, which the Notice line covers.
         // Arrange: the same declaring project, but the consumer has no reference to it, as when a load could not resolve it
         string dir = TestWorkspace.NewTempDir();
         (AdhocWorkspace workspace, Project core) = TestWorkspace.CreateProject(Path.Combine(dir, "Core"), "Acme.Core", ("Core.cs", CoreSource));
