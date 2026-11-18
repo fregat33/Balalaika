@@ -191,13 +191,15 @@ public sealed class IndexingHostedService(
     /// A linked worktree keeps its <c>HEAD</c> outside the working tree, so no root watcher sees a checkout in it, and
     /// a branch moved from outside (<c>git update-ref</c>) changes only a ref file. Watches <c>HEAD</c>, the current
     /// branch's ref and <c>packed-refs</c> for the repository root of every known solution. Safe to call again: a HEAD
-    /// already watched is skipped.
+    /// already watched is skipped. Returns the solutions whose repository root got a newly started watch: a HEAD change
+    /// before the watcher existed raised no event, so the caller reads their heads.
     /// </summary>
-    private void WatchWorktreeHeads()
+    private List<string> WatchWorktreeHeads()
     {
+        List<string> newlyWatched = [];
         if (this._watcher is null)
         {
-            return;
+            return newlyWatched;
         }
 
         foreach (string solution in workspaces.KnownSolutions)
@@ -205,9 +207,14 @@ public sealed class IndexingHostedService(
             if (git.FindRepositoryRoot(solution) is { } root)
             {
                 this._solutionRoots[solution] = root;
-                this._watcher.WatchWorktreeHead(root);
+                if (this._watcher.WatchWorktreeHead(root))
+                {
+                    newlyWatched.Add(solution);
+                }
             }
         }
+
+        return newlyWatched;
     }
 
     /// <summary>
@@ -688,7 +695,8 @@ public sealed class IndexingHostedService(
         // A worktree re-created at the same path may register nothing new, yet its HEAD watcher was released when it vanished.
         if (appeared.Count > 0 || createdPaths is { Count: > 0 } || createdDirectories is { Count: > 0 })
         {
-            this.WatchWorktreeHeads();
+            // The read follows the watch start: an earlier HEAD change is caught by it, a later one raises its own event.
+            this.RefreshUnloadedNow(this.WatchWorktreeHeads());
         }
 
         if (appeared.Count > 0)

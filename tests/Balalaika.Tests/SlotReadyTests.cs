@@ -238,6 +238,27 @@ public sealed class SlotReadyTests
     }
 
     [GitFact]
+    public async Task Worktree_ReplacedAndMovedBeforeItsWatcherStarts_RecordsTheMovedHead()
+    {
+        // Arrange: a long debounce, so the HEAD watcher of the replacement starts after git has already moved HEAD
+        await using Host host = new(warmUp: true, debounceMilliseconds: 2000);
+        host.CreateRepoWithWorktree();
+        await host.StartAsync();
+        string old = host.Git(host.Slot, "rev-parse", "HEAD").Trim();
+        (await WaitUntilAsync(() => host.IsReadyWithHead(host.SlotSolution, old))).Should().BeTrue(host.Status());
+        host.Git(host.Repo, "worktree", "remove", "--force", host.Slot);
+        (await WaitUntilAsync(() => !host.Status().Contains(host.SlotSolution, StringComparison.OrdinalIgnoreCase))).Should().BeTrue(host.Status());
+
+        // Act: re-created and detached inside the debounce window
+        host.Git(host.Repo, "worktree", "add", host.Slot, "main");
+        string moved = host.CommitSameTree(host.Repo, old);
+        host.Git(host.Slot, "checkout", "--detach", moved);
+
+        // Assert
+        (await WaitUntilAsync(() => host.IsReadyWithHead(host.SlotSolution, moved))).Should().BeTrue(host.Status());
+    }
+
+    [GitFact]
     public async Task Worktree_UnwatchedAndWatchedAgainWhileTheWatcherIsBeingCreated_LeavesNoOrphanedWatcher()
     {
         // Arrange
