@@ -69,11 +69,9 @@ public sealed class LiveReferenceLoadTests
     public async Task RealLoader_ThisRepositorySolution_FindReferencesOfAWorkspaceMemberAnswersZero_WhileTheCallGraphListsItsCallers_Defect()
     {
         // Arrange: Balalaika.slnx lists Balalaika.Server (Web SDK, references Balalaika.Workspace) before Balalaika.Workspace
-        string? sln = FindRepositorySolution();
-        if (sln is null)
-        {
-            return;
-        }
+        string? found = FindRepositorySolution();
+        found.Should().NotBeNull("the test runs from a checkout of this repository");
+        string sln = found!;
 
         using Server server = Server.Create();
         server.Workspaces.RegisterSolutions([sln]);
@@ -97,7 +95,7 @@ public sealed class LiveReferenceLoadTests
         viaResolved.Should().Be(0);
         viaOwn.Should().BeGreaterThanOrEqualTo(3, "the declaring project's own symbol finds the usages");
         graph.Should().Contain("Callers (");
-        graph.Should().Contain("QueryService.AppendLiveReferencesAsync");
+        graph.Should().Contain(Path.Combine("src", "Balalaika.Workspace", "QueryService.cs"), "a production caller of BindsToDeclaration exists");
     }
 
     [MsBuildFact]
