@@ -25,6 +25,13 @@ public sealed class LoadedSolution : IDisposable
     public TimeSpan LoadDuration { get; init; }
     public IReadOnlyList<string> LoadDiagnostics { get; }
 
+    /// <summary>Failure messages without the "Failure: " prefix; NuGet audit noise excluded.</summary>
+    public IReadOnlyList<string> LoadFailures => this.LoadDiagnostics
+        .Where(d => d.StartsWith("Failure: ", StringComparison.Ordinal))
+        .Select(d => d["Failure: ".Length..])
+        .Where(m => !IsNuGetAuditNoise(m))
+        .ToList();
+
     public Solution Solution
     {
         get

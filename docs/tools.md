@@ -161,6 +161,8 @@ Live Acme.Orders: 4 references
 - Live and index hits print the same words for the same source (`EnclosingMember`, `DocumentExtractor.UsageKindOf`,
   `EnclosingDisplay`). Index rows extracted before the column existed print no `in` part.
 
+When the live answer may be incomplete, a `Notice:` line before `Total:` says why: load failures of a solution that answered live (their count and the first message), index jobs the server has not finished, or file changes the watcher has not applied yet. `status` shows the details.
+
 ### `find_implementations(symbol, solution?, limit = 200)`
 
 Interface: implementing types (transitive) and derived interfaces. Class: derived classes (transitive). Member:
