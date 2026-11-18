@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- `find_references` on a type lists the `new T(...)` expressions that create it, and on a constructor lists target-typed `new(...)` calls; `review_changes` impact counts follow the same rule.
+
 ## 0.2.1 - 2026-11-15
 
 ### Added

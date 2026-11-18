@@ -1,6 +1,7 @@
 using System.Text;
 using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FindSymbols;
 using Microsoft.CodeAnalysis.Text;
 using Microsoft.Extensions.Logging;
@@ -101,14 +102,9 @@ public sealed class QueryService(
         int unfiltered = 0;
         foreach (ReferencedSymbol rs in referenced)
         {
-            if (!BindsToDeclaration(rs, symbol))
-            {
-                continue;
-            }
-
             foreach (ReferenceLocation loc in rs.Locations)
             {
-                if (loc.IsImplicit || !loc.Location.IsInSource)
+                if (!CountsAsReference(rs, loc, symbol, ct))
                 {
                     continue;
                 }
@@ -688,6 +684,53 @@ public sealed class QueryService(
     }
 
     /// <summary>
+    /// Whether one <c>SymbolFinder</c> location counts as a reference of <paramref name="symbol"/>, the one rule for the
+    /// live listing and the impact counts. A location in source counts when its group binds to the declaration and it
+    /// is not implicit, or it is a target-typed <c>new(...)</c> (flagged implicit, and the index records it); or when
+    /// the symbol is a type and the location is the type name of a <c>new T(...)</c> (filed under the constructor's group,
+    /// and the index records it against the type). Other implicit locations (base constructor calls, foreach, await,
+    /// deconstruction) have no index row and stay out.
+    /// </summary>
+    private static bool CountsAsReference(ReferencedSymbol group, ReferenceLocation loc, ISymbol symbol, CancellationToken ct)
+    {
+        if (!loc.Location.IsInSource || loc.Location.SourceTree is not { } tree)
+        {
+            return false;
+        }
+
+        if (BindsToDeclaration(group, symbol))
+        {
+            if (!loc.IsImplicit)
+            {
+                return true;
+            }
+
+            return tree.GetRoot(ct).FindToken(loc.Location.SourceSpan.Start).Parent is ImplicitObjectCreationExpressionSyntax;
+        }
+
+        if (loc.IsImplicit
+            || symbol is not INamedTypeSymbol type
+            || group.Definition is not IMethodSymbol { MethodKind: MethodKind.Constructor } constructor
+            || !SymbolEqualityComparer.Default.Equals(constructor.ContainingType.OriginalDefinition, type.OriginalDefinition))
+        {
+            return false;
+        }
+
+        SyntaxNode? node = tree.GetRoot(ct).FindToken(loc.Location.SourceSpan.Start).Parent;
+        if (node is not SimpleNameSyntax)
+        {
+            return false;
+        }
+
+        if (node.Parent is QualifiedNameSyntax qualified && qualified.Right == node)
+        {
+            node = qualified;
+        }
+
+        return node.Parent is ObjectCreationExpressionSyntax creation && creation.Type == node;
+    }
+
+    /// <summary>
     /// Source locations that bind to this declaration itself. <c>SymbolFinder</c> also returns the groups of related
     /// symbols (the interface member an implementation satisfies, overridden members), which neither
     /// <c>find_references</c> nor an impact count keeps: a consumer's <c>Consume</c> would otherwise count every consumer's callers.
@@ -698,14 +741,9 @@ public sealed class QueryService(
         int tests = 0;
         foreach (ReferencedSymbol rs in await SymbolFinder.FindReferencesAsync(symbol, solution, ct).ConfigureAwait(false))
         {
-            if (!BindsToDeclaration(rs, symbol))
-            {
-                continue;
-            }
-
             foreach (ReferenceLocation location in rs.Locations)
             {
-                if (location.IsImplicit || !location.Location.IsInSource)
+                if (!CountsAsReference(rs, location, symbol, ct))
                 {
                     continue;
                 }

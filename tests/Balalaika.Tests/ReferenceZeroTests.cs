@@ -70,10 +70,27 @@ public sealed class ReferenceZeroTests : IDisposable
             public decimal Quote(int units) => units;
         }
 
+        public record Box<T>(T Value);
+
+        public class Animal { public Animal(string name) { } }
+
+        public class Dog : Animal { public Dog() : base("dog") { } }
+
+        public class Bag { public System.Collections.Generic.IEnumerator<int> GetEnumerator() => throw new System.NotImplementedException(); }
+
+        public static class LoopUsage
+        {
+            public static void Run(Bag bag)
+            {
+                foreach (int item in bag) { }
+            }
+        }
+
         public static class CoreUsage
         {
             public static void Run(IPricing pricing, OrderInfo info)
             {
+                Box<int> box = new Box<int>(1);
                 Bus.Dispatch(new PlaceOrder(1));
                 Printer.Print(new(1));
                 string dto = info.ToView();
@@ -96,6 +113,7 @@ public sealed class ReferenceZeroTests : IDisposable
         {
             public static void Run(IPricing pricing, OrderInfo info)
             {
+                Box<int> box = new Box<int>(2);
                 Registry.Register<PriceCalculator>();
                 Bus.Dispatch(new PlaceOrder(2));
                 Printer.Print(new(2));
@@ -222,15 +240,61 @@ public sealed class ReferenceZeroTests : IDisposable
     // ------------------------------------------------------------------ shape 2: record created with new Name(...), passed to a generic Dispatch
 
     [Fact]
-    public async Task RecordCreatedWithNew_TypeSymbol_Defect()
+    public async Task RecordCreatedWithNew_TypeSymbol_Correct()
     {
         // Act
         Measured m = await MeasureAsync(this._query, "T:Acme.Core.PlaceOrder");
 
-        // Assert: real usages 2 (the type name in each of the two `new PlaceOrder(...)`); the index has both, the live path
-        // has none, because SymbolFinder files those names under the constructor group and BindsToDeclaration (QueryService.cs:104) drops it.
-        m.Live.Should().Be(0, m.Output);
+        // Assert: real usages 2 (the type name in each of the two `new PlaceOrder(...)`); SymbolFinder files those names
+        // under the constructor group, and CountsAsReference takes them back for a type search.
+        m.Live.Should().Be(2, m.Output);
         m.Index.Should().Be(2, m.Output);
+    }
+
+    [Fact]
+    public async Task RecordCreatedWithNew_TypeSymbol_PrintsKindCreation_Correct()
+    {
+        // Act
+        Measured m = await MeasureAsync(this._query, "T:Acme.Core.PlaceOrder");
+
+        // Assert
+        string[] hits = m.Output.Split('\n').Where(l => Regex.IsMatch(l, @"^\s+\S+\.cs:\d+:\d+\s")).ToArray();
+        hits.Should().NotBeEmpty(m.Output);
+        hits.Should().OnlyContain(l => l.Contains(" creation"), m.Output);
+    }
+
+    [Fact]
+    public async Task GenericRecordCreatedWithNew_TypeSymbol_LiveEqualsIndex_Correct()
+    {
+        // Act
+        Measured m = await MeasureAsync(this._query, "T:Acme.Core.Box`1");
+
+        // Assert: real usages 4 (the type name in each `new Box<int>(...)` plus the declared type of each local)
+        m.Index.Should().NotBeNull(m.Output);
+        m.Live.Should().Be(m.Index!.Value, m.Output);
+        m.Live.Should().BeGreaterThanOrEqualTo(2, m.Output);
+    }
+
+    [Fact]
+    public async Task ClassConstructorCalledOnlyThroughBaseInitializer_TypeSymbol_LiveEqualsIndex_Correct()
+    {
+        // Act
+        Measured m = await MeasureAsync(this._query, "T:Acme.Core.Animal");
+
+        // Assert: the `: base("dog")` initializer is not a creation of the type, in neither path
+        m.Index.Should().NotBeNull(m.Output);
+        m.Live.Should().Be(m.Index!.Value, m.Output);
+        m.Output.Should().NotContain(" creation", "no `new Animal(...)` exists");
+    }
+
+    [Fact]
+    public async Task MethodUsedOnlyByForeach_GetEnumerator_StaysZero_Correct()
+    {
+        // Act
+        Measured m = await MeasureAsync(this._query, "M:Acme.Core.Bag.GetEnumerator");
+
+        // Assert: SymbolFinder returns the foreach as an implicit location; the index has no row for it
+        m.Live.Should().Be(0, m.Output);
     }
 
     [Fact]
@@ -276,14 +340,14 @@ public sealed class ReferenceZeroTests : IDisposable
     }
 
     [Fact]
-    public async Task RecordCreatedWithTargetTypedNew_ConstructorSymbol_Defect()
+    public async Task RecordCreatedWithTargetTypedNew_ConstructorSymbol_Correct()
     {
         // Act
         Measured m = await MeasureAsync(this._query, "M:Acme.Core.Receipt.#ctor(System.Int32)");
 
-        // Assert: real usages 2 (`Printer.Print(new(1))` and `Printer.Print(new(2))`); the index has both, SymbolFinder
-        // flags the location of a target-typed new as IsImplicit and QueryService.cs:111 skips it.
-        m.Live.Should().Be(0, m.Output);
+        // Assert: real usages 2 (`Printer.Print(new(1))` and `Printer.Print(new(2))`); SymbolFinder flags the location
+        // of a target-typed new as IsImplicit, and CountsAsReference keeps it.
+        m.Live.Should().Be(2, m.Output);
         m.Index.Should().Be(2, m.Output);
     }
 
@@ -299,7 +363,7 @@ public sealed class ReferenceZeroTests : IDisposable
         // Act
         IEnumerable<ReferencedSymbol> groups = await SymbolFinder.FindReferencesAsync(constructor, loaded.Solution, CancellationToken.None);
 
-        // Assert: real usages 2; SymbolFinder finds both, flagged IsImplicit, and AppendLiveReferencesAsync skips every IsImplicit location
+        // Assert: real usages 2; SymbolFinder finds both, flagged IsImplicit, which is why CountsAsReference checks the syntax node of an implicit location
         ReferenceLocation[] locations = groups.SelectMany(g => g.Locations).ToArray();
         locations.Should().HaveCount(2);
         locations.Should().OnlyContain(l => l.IsImplicit);
