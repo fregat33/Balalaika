@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.2 - 2026-11-19
 
 ### Added
 - `find_references` prints a `Notice:` line before `Total:` when its live answer may be incomplete: load failures of the answering solution, pending index jobs or unapplied watcher changes.
