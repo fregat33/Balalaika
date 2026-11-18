@@ -41,9 +41,9 @@ public sealed class QueryService(
         }
 
         ResolvedSymbol? r = await resolver.ResolveAsync(spec, solution, ct).ConfigureAwait(false);
-        if (r is null)
+        if (r is null || r.Candidates is not null)
         {
-            return this.NotFoundWithIndexFallback(spec, limit);
+            return this.NotResolved(r, spec, limit);
         }
 
         StringBuilder sb = new();
@@ -222,6 +222,25 @@ public sealed class QueryService(
         return total;
     }
 
+    /// <summary>The answer for a spec that resolved to nothing (null) or to several overloads (<see cref="ResolvedSymbol.Candidates"/>).</summary>
+    private string NotResolved(ResolvedSymbol? resolved, string spec, int limit)
+    {
+        if (resolved?.Candidates is not { } candidates)
+        {
+            return this.NotFoundWithIndexFallback(spec, limit);
+        }
+
+        ToolCallScope.Report(0);
+        StringBuilder sb = new();
+        sb.Append("Ambiguous symbol: ").Append(spec.Trim()).Append(" matches ").Append(candidates.Count).AppendLine(" overloads; pass the doc id or the parameter types:");
+        foreach (ISymbol candidate in candidates)
+        {
+            sb.Append("  ").AppendLine(candidate.GetDocumentationCommentId() ?? candidate.ToDisplayString());
+        }
+
+        return sb.ToString();
+    }
+
     private string NotFoundWithIndexFallback(string spec, int limit)
     {
         ToolCallScope.Report(0);
@@ -269,9 +288,9 @@ public sealed class QueryService(
     public async Task<string> FindImplementationsAsync(string spec, string? solution, bool typesOnly, int limit, CancellationToken ct)
     {
         ResolvedSymbol? r = await resolver.ResolveAsync(spec, solution, ct).ConfigureAwait(false);
-        if (r is null)
+        if (r is null || r.Candidates is not null)
         {
-            return this.NotFoundWithIndexFallback(spec, limit);
+            return this.NotResolved(r, spec, limit);
         }
 
         if (typesOnly && r.Symbol is not INamedTypeSymbol)
@@ -401,9 +420,9 @@ public sealed class QueryService(
         }
 
         ResolvedSymbol? r = await resolver.ResolveAsync(spec, solution, ct).ConfigureAwait(false);
-        if (r is null)
+        if (r is null || r.Candidates is not null)
         {
-            return this.NotFoundWithIndexFallback(spec, 10);
+            return this.NotResolved(r, spec, 10);
         }
 
         if (r.Symbol is INamedTypeSymbol or INamespaceSymbol)
@@ -830,9 +849,9 @@ public sealed class QueryService(
     public async Task<string> GoToDefinitionAsync(string spec, string? solution, int maxLines, CancellationToken ct)
     {
         ResolvedSymbol? r = await resolver.ResolveAsync(spec, solution, ct).ConfigureAwait(false);
-        if (r is null)
+        if (r is null || r.Candidates is not null)
         {
-            return this.NotFoundWithIndexFallback(spec, 10);
+            return this.NotResolved(r, spec, 10);
         }
 
         StringBuilder sb = new();
@@ -882,9 +901,9 @@ public sealed class QueryService(
     public async Task<string> GetSymbolInfoAsync(string spec, string? solution, CancellationToken ct)
     {
         ResolvedSymbol? r = await resolver.ResolveAsync(spec, solution, ct).ConfigureAwait(false);
-        if (r is null)
+        if (r is null || r.Candidates is not null)
         {
-            return this.NotFoundWithIndexFallback(spec, 10);
+            return this.NotResolved(r, spec, 10);
         }
 
         ISymbol s = r.Symbol;
@@ -1006,9 +1025,9 @@ public sealed class QueryService(
     public async Task<string> ListMembersAsync(string spec, string? solution, string? filter, bool includeInherited, int limit, CancellationToken ct)
     {
         ResolvedSymbol? r = await resolver.ResolveAsync(spec, solution, ct).ConfigureAwait(false);
-        if (r is null)
+        if (r is null || r.Candidates is not null)
         {
-            return this.NotFoundWithIndexFallback(spec, 10);
+            return this.NotResolved(r, spec, 10);
         }
 
         INamedTypeSymbol? type = r.Symbol as INamedTypeSymbol ?? r.Symbol.ContainingType;
@@ -1083,9 +1102,9 @@ public sealed class QueryService(
         }
 
         ResolvedSymbol? r = await resolver.ResolveAsync(target, solution, ct).ConfigureAwait(false);
-        if (r is null)
+        if (r is null || r.Candidates is not null)
         {
-            return this.NotFoundWithIndexFallback(target, 10);
+            return this.NotResolved(r, target, 10);
         }
 
         INamedTypeSymbol? type = r.Symbol as INamedTypeSymbol ?? r.Symbol.ContainingType;

@@ -4,7 +4,7 @@ using Balalaika.Index;
 
 namespace Balalaika.Workspace;
 
-public sealed record ResolvedSymbol(ISymbol Symbol, Project Project, LoadedSolution Solution, bool IsSource);
+public sealed record ResolvedSymbol(ISymbol Symbol, Project Project, LoadedSolution Solution, bool IsSource, IReadOnlyList<ISymbol>? Candidates = null);
 
 /// <summary>
 /// Turns a user-supplied symbol spec into an <see cref="ISymbol"/> in a live compilation. Accepted forms:
@@ -122,14 +122,15 @@ public sealed class SymbolResolver(WorkspaceManager workspaces, IndexStore index
                 continue;
             }
 
-            ISymbol? symbol = ResolveInCompilation(spec, compilation);
-            if (symbol is null)
+            ISymbol? symbol = ResolveInCompilation(spec, compilation, out IReadOnlyList<ISymbol>? ambiguous);
+            if (symbol is null && ambiguous is null)
             {
                 continue;
             }
 
+            symbol ??= ambiguous![0];
             bool isSource = symbol.Locations.Any(l => l.IsInSource);
-            ResolvedSymbol resolved = new(symbol, project, loaded, isSource);
+            ResolvedSymbol resolved = new(symbol, project, loaded, isSource, ambiguous);
             if (isSource)
             {
                 return resolved;
@@ -369,8 +370,19 @@ public sealed class SymbolResolver(WorkspaceManager workspaces, IndexStore index
         return spec;
     }
 
+    /// <summary>Resolves a spec to one symbol; null when nothing matches or when a member name matches several overloads.</summary>
     public static ISymbol? ResolveInCompilation(string spec, Compilation compilation)
     {
+        return ResolveInCompilation(spec, compilation, out _);
+    }
+
+    /// <summary>
+    /// As above; when a <c>Type.Member</c> name matches several overloads without a matching parameter text, the result
+    /// is null and <paramref name="ambiguous"/> lists the overloads in declaration order.
+    /// </summary>
+    public static ISymbol? ResolveInCompilation(string spec, Compilation compilation, out IReadOnlyList<ISymbol>? ambiguous)
+    {
+        ambiguous = null;
         if (LooksLikeDocId(spec))
         {
             return DocumentationCommentId.GetFirstSymbolForDeclarationId(spec, compilation);
@@ -400,7 +412,13 @@ public sealed class SymbolResolver(WorkspaceManager workspaces, IndexStore index
             INamedTypeSymbol? container = FindType(typeName, compilation);
             if (container is not null)
             {
-                ISymbol? member = PickMember(container, memberName, parameterText);
+                ISymbol? member = PickMember(container, memberName, parameterText, out IReadOnlyList<ISymbol>? overloads);
+                if (overloads is not null)
+                {
+                    ambiguous = overloads;
+                    return null;
+                }
+
                 if (member is not null)
                 {
                     return member;
@@ -466,11 +484,21 @@ public sealed class SymbolResolver(WorkspaceManager workspaces, IndexStore index
         return best;
     }
 
-    private static ISymbol? PickMember(INamedTypeSymbol container, string memberName, string? parameterText)
+    private static ISymbol? PickMember(INamedTypeSymbol container, string memberName, string? parameterText, out IReadOnlyList<ISymbol>? ambiguous)
     {
+        ambiguous = null;
         List<ISymbol> members = memberName == container.Name || memberName == ".ctor" || memberName == "ctor"
             ? container.InstanceConstructors.Cast<ISymbol>().ToList()
             : container.GetMembers(memberName).Where(m => !m.IsImplicitlyDeclared).ToList();
+
+        if (members.Count > 1 || (members.Count == 1 && members[0].IsImplicitlyDeclared))
+        {
+            List<ISymbol> explicitMembers = members.Where(m => !m.IsImplicitlyDeclared).ToList();
+            if (explicitMembers.Count > 0)
+            {
+                members = explicitMembers;
+            }
+        }
 
         if (members.Count == 0)
         {
@@ -503,6 +531,12 @@ public sealed class SymbolResolver(WorkspaceManager workspaces, IndexStore index
                     }
                 }
             }
+        }
+
+        if (members.Count > 1)
+        {
+            ambiguous = members;
+            return null;
         }
 
         return members[0];

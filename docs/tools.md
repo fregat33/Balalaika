@@ -90,7 +90,7 @@ Every tool that takes a symbol accepts these forms, tried in this order inside e
 |---|---|
 | Documentation-comment id | `T:Acme.Orders.Domain.Order`, `M:Acme.Orders.Domain.Order.SetStatus(Acme.Orders.Domain.Status,System.Guid,System.DateTime)` |
 | Fully qualified type | `Acme.Orders.Domain.Order`, nested `Ns.Outer.Inner`, generic `MediatR.IRequestHandler<TRequest,TResponse>` |
-| Fully qualified member | `Acme.Orders.Domain.Order.SetStatus`, with parameter types to pick an overload `Demo.Foo.Run(int)`, constructor `Demo.Foo.Foo(int)` |
+| Fully qualified member | `Acme.Orders.Domain.Order.SetStatus`, with parameter types to pick an overload `Demo.Foo.Run(int)`, constructor `Demo.Foo.Foo(int)`. A name that matches several overloads without parameter types, or with parameter types that match none, answers `Ambiguous symbol: ...` with the doc id of each overload |
 | Bare name | `IUnitOfWork`, `PlaceOrderCommand` (types preferred over members, shortest display string wins). Source first, then the referenced assemblies, so `AuthorizeAttribute` resolves; an attribute may be named as applied, `Authorize` or `HttpGet` |
 | Source position | `C:\src\acme\...\Order.cs:42:17` or `...\Order.cs:42` (1-based line and column, the form every hit line prints) |
 
