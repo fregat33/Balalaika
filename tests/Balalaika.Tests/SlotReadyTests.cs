@@ -259,6 +259,28 @@ public sealed class SlotReadyTests
     }
 
     [GitFact]
+    public async Task Worktree_WithTwoSolutionsReplacedAndMovedBeforeItsWatcherStarts_RecordsTheMovedHeadOfBoth()
+    {
+        // Arrange: two solutions in the slot's repository root; a long debounce, so the HEAD watcher starts after git moved HEAD
+        await using Host host = new(warmUp: true, debounceMilliseconds: 2000);
+        host.CreateRepoWithWorktree();
+        string other = host.CommitSecondSolutionInSlot();
+        await host.StartAsync();
+        string old = host.Git(host.Slot, "rev-parse", "HEAD").Trim();
+        (await WaitUntilAsync(() => host.IsReadyWithHead(host.SlotSolution, old) && host.IsReadyWithHead(other, old))).Should().BeTrue(host.Status());
+        host.Git(host.Repo, "worktree", "remove", "--force", host.Slot);
+        (await WaitUntilAsync(() => !host.Status().Contains(host.SlotSolution, StringComparison.OrdinalIgnoreCase))).Should().BeTrue(host.Status());
+
+        // Act: re-created and detached inside the debounce window
+        host.Git(host.Repo, "worktree", "add", host.Slot, "main");
+        string moved = host.CommitSameTree(host.Repo, old);
+        host.Git(host.Slot, "checkout", "--detach", moved);
+
+        // Assert
+        (await WaitUntilAsync(() => host.IsReadyWithHead(host.SlotSolution, moved) && host.IsReadyWithHead(other, moved))).Should().BeTrue(host.Status());
+    }
+
+    [GitFact]
     public async Task Worktree_UnwatchedAndWatchedAgainWhileTheWatcherIsBeingCreated_LeavesNoOrphanedWatcher()
     {
         // Arrange
@@ -964,6 +986,15 @@ public sealed class SlotReadyTests
             this.Git(this.Repo, "commit", "-m", "initial");
             this.Git(this.Repo, "checkout", "--detach");
             this.Git(this.Repo, "worktree", "add", this.Slot, "main");
+        }
+
+        /// <summary>Commits a second solution file (<c>Other.slnx</c>) beside <c>Demo.slnx</c> on the branch checked out in the slot.</summary>
+        public string CommitSecondSolutionInSlot()
+        {
+            File.WriteAllText(Path.Combine(this.Slot, "Other.slnx"), "<Solution><Project Path=\"Demo.csproj\" /></Solution>");
+            this.Git(this.Slot, "add", "Other.slnx");
+            this.Git(this.Slot, "commit", "-m", "second solution");
+            return Path.Combine(this.Slot, "Other.slnx");
         }
 
         /// <summary>A normal repository with <c>main</c> checked out and no worktree.</summary>

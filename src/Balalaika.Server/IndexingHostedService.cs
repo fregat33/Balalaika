@@ -202,12 +202,24 @@ public sealed class IndexingHostedService(
             return newlyWatched;
         }
 
+        HashSet<string> newRoots = new(StringComparer.OrdinalIgnoreCase);
         foreach (string solution in workspaces.KnownSolutions)
         {
             if (git.FindRepositoryRoot(solution) is { } root)
             {
                 this._solutionRoots[solution] = root;
                 if (this._watcher.WatchWorktreeHead(root))
+                {
+                    newRoots.Add(root);
+                }
+            }
+        }
+
+        if (newRoots.Count > 0)
+        {
+            foreach (string solution in workspaces.KnownSolutions)
+            {
+                if (this._solutionRoots.TryGetValue(solution, out string? root) && newRoots.Contains(root))
                 {
                     newlyWatched.Add(solution);
                 }
