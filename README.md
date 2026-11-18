@@ -72,6 +72,8 @@ dotnet publish src/Balalaika.Server -c Release -o C:\tools\balalaika
 C:\tools\balalaika\Balalaika.Server.exe
 ```
 
+Package versions live in `Directory.Packages.props`. After changing one, run `dotnet restore Balalaika.slnx --force-evaluate` and commit the changed `packages.lock.json` files; a plain restore fails with `NU1004` until then.
+
 Health and status text: `http://localhost:5301/health`. MCP endpoint: `http://localhost:5301/mcp` (streamable HTTP,
 stateless). The server is meant to run once per machine and be shared by every agent session.
 

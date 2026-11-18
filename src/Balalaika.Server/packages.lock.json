@@ -1,0 +1,317 @@
+{
+  "version": 2,
+  "dependencies": {
+    "net10.0": {
+      "ModelContextProtocol.AspNetCore": {
+        "type": "Direct",
+        "requested": "[2.2.0, )",
+        "resolved": "2.2.0",
+        "contentHash": "3JelDMuFIwFzXybsh6K30G6wXu5gmqKnuRnieqgBMuR0FkqqXRv4B+NYZuPgthSyNq5UwRyvv2U2VJBE3RD3PQ==",
+        "dependencies": {
+          "ModelContextProtocol": "[2.2.0]"
+        }
+      },
+      "Serilog.AspNetCore": {
+        "type": "Direct",
+        "requested": "[10.0.0, )",
+        "resolved": "10.0.0",
+        "contentHash": "a/cNa1mY4On1oJlfGG1wAvxjp5g7OEzk/Jf/nm7NF9cWoE7KlZw1GldrifUBWm9oKibHkR7Lg/l5jy3y7ACR8w==",
+        "dependencies": {
+          "Serilog": "4.3.0",
+          "Serilog.Extensions.Hosting": "10.0.0",
+          "Serilog.Formatting.Compact": "3.0.0",
+          "Serilog.Settings.Configuration": "10.0.0",
+          "Serilog.Sinks.Console": "6.1.1",
+          "Serilog.Sinks.Debug": "3.0.0",
+          "Serilog.Sinks.File": "7.0.0"
+        }
+      },
+      "Humanizer.Core": {
+        "type": "Transitive",
+        "resolved": "2.14.1",
+        "contentHash": "lQKvtaTDOXnoVJ20ibTuSIOf2i0uO0MPbDhd1jm238I+U/2ZnRENj0cktKZhtchBMtCUSRQ5v4xBCUbKNmyVMw=="
+      },
+      "Microsoft.Build.Framework": {
+        "type": "Transitive",
+        "resolved": "17.11.48",
+        "contentHash": "C3WIMt2wBl4++NX3jSEpTq5KXBhvAV154R4JrYHkfy9JSBcXWiL0mkgpspk5xSdOj+fS/uz7zluIy6bMM1fkkQ=="
+      },
+      "Microsoft.CodeAnalysis.Analyzers": {
+        "type": "Transitive",
+        "resolved": "5.9.0-1.26328.17",
+        "contentHash": "HP9NNk8ZjOSI2hgOyXnQg+kv7/X837Vr2nAlXiGAtqtYnYKjRRa1UmQFr8KFs5ynGYKqfbb8zB9APoWjiAGdMg=="
+      },
+      "Microsoft.CodeAnalysis.Common": {
+        "type": "Transitive",
+        "resolved": "5.9.0",
+        "contentHash": "IYaIaUWdIx539AReKZOBEqTskFusZfCh/wFSPilDvCn5Say8MegLw2LONcSIcVy+v3Gzv53qYBspgvBGSErfbQ==",
+        "dependencies": {
+          "Microsoft.CodeAnalysis.Analyzers": "5.9.0-1.26328.17"
+        }
+      },
+      "Microsoft.CodeAnalysis.CSharp": {
+        "type": "Transitive",
+        "resolved": "5.9.0",
+        "contentHash": "7JGDA0UT1+h7k9ZcA3rF4eFC8+QPq1xyYaXxag4p8r/zzPurEJxvdi7aM+MRL/SfP7XADXpWF/pl/eUYXOq/ww==",
+        "dependencies": {
+          "Microsoft.CodeAnalysis.Analyzers": "5.9.0-1.26328.17",
+          "Microsoft.CodeAnalysis.Common": "[5.9.0]"
+        }
+      },
+      "Microsoft.CodeAnalysis.Workspaces.Common": {
+        "type": "Transitive",
+        "resolved": "5.9.0",
+        "contentHash": "1A6jz50NG4nOEW8tX5+h+MyHqjWL0mPGwrUdwu+OlTfyknLo0GfxSqj4zEks8uVUdHdo9v8Ir9dHxACf8iYNEA==",
+        "dependencies": {
+          "Humanizer.Core": "2.14.1",
+          "Microsoft.CodeAnalysis.Analyzers": "5.9.0-1.26328.17",
+          "Microsoft.CodeAnalysis.Common": "[5.9.0]",
+          "System.Composition": "10.0.1"
+        }
+      },
+      "Microsoft.Data.Sqlite.Core": {
+        "type": "Transitive",
+        "resolved": "10.0.12",
+        "contentHash": "2aL9eL5HQr0V4b8V909SD+jQAx6qnTTl7sT/v3D8dIvmr2UGdpZIQxqm1pj2Js3e4EYTvpw0oMH7DjapJJuPPw==",
+        "dependencies": {
+          "SQLitePCLRaw.core": "2.1.12"
+        }
+      },
+      "Microsoft.Extensions.AI.Abstractions": {
+        "type": "Transitive",
+        "resolved": "10.8.3",
+        "contentHash": "K0B05oApxmviWalNHPMBBcRC7erKiDATz3ENNR/jqTR9JwIwLRefgDhj2jCRwL1aca99pXUe0qyQC73/xIuZig=="
+      },
+      "Microsoft.Extensions.DependencyModel": {
+        "type": "Transitive",
+        "resolved": "10.0.0",
+        "contentHash": "RFYJR7APio/BiqdQunRq6DB+nDB6nc2qhHr77mlvZ0q0BT8PubMXN7XicmfzCbrDE/dzhBnUKBRXLTcqUiZDGg=="
+      },
+      "Microsoft.VisualStudio.SolutionPersistence": {
+        "type": "Transitive",
+        "resolved": "1.0.52",
+        "contentHash": "oNv2JtYXhpdJrX63nibx1JT3uCESOBQ1LAk7Dtz/sr0+laW0KRM6eKp4CZ3MHDR2siIkKsY8MmUkeP5DKkQQ5w=="
+      },
+      "ModelContextProtocol": {
+        "type": "Transitive",
+        "resolved": "2.2.0",
+        "contentHash": "4Pb9u02Nwsp0poueDsqNdyGRojFxOYpljB7zDBsq+aHL+Afou3OgxlBc3GWFVnsRMRJrUtWqDh3s6k2JgPzmrQ==",
+        "dependencies": {
+          "ModelContextProtocol.Core": "[2.2.0]"
+        }
+      },
+      "ModelContextProtocol.Core": {
+        "type": "Transitive",
+        "resolved": "2.2.0",
+        "contentHash": "FeBfXU6T8k+jw4afg4sfxdEX2rL/e5oKOk9ROOGztu9k47+7Bz08sdaToYt2XvMY1opNbwxYQOFMj6wH9TInhA==",
+        "dependencies": {
+          "Microsoft.Extensions.AI.Abstractions": "10.8.3"
+        }
+      },
+      "Serilog": {
+        "type": "Transitive",
+        "resolved": "4.3.0",
+        "contentHash": "+cDryFR0GRhsGOnZSKwaDzRRl4MupvJ42FhCE4zhQRVanX0Jpg6WuCBk59OVhVDPmab1bB+nRykAnykYELA9qQ=="
+      },
+      "Serilog.Extensions.Hosting": {
+        "type": "Transitive",
+        "resolved": "10.0.0",
+        "contentHash": "E7juuIc+gzoGxgzFooFgAV8g9BfiSXNKsUok9NmEpyAXg2odkcPsMa/Yo4axkJRlh0se7mkYQ1GXDaBemR+b6w==",
+        "dependencies": {
+          "Serilog": "4.3.0",
+          "Serilog.Extensions.Logging": "10.0.0"
+        }
+      },
+      "Serilog.Extensions.Logging": {
+        "type": "Transitive",
+        "resolved": "10.0.0",
+        "contentHash": "vx0kABKl2dWbBhhqAfTOk53/i8aV/5VaT3a6il9gn72Wqs2pM7EK2OB6No6xdqK2IaY6Zf9gdjLuK9BVa2rT+Q==",
+        "dependencies": {
+          "Serilog": "4.2.0"
+        }
+      },
+      "Serilog.Formatting.Compact": {
+        "type": "Transitive",
+        "resolved": "3.0.0",
+        "contentHash": "wQsv14w9cqlfB5FX2MZpNsTawckN4a8dryuNGbebB/3Nh1pXnROHZov3swtu3Nj5oNG7Ba+xdu7Et/ulAUPanQ==",
+        "dependencies": {
+          "Serilog": "4.0.0"
+        }
+      },
+      "Serilog.Settings.Configuration": {
+        "type": "Transitive",
+        "resolved": "10.0.0",
+        "contentHash": "LNq+ibS1sbhTqPV1FIE69/9AJJbfaOhnaqkzcjFy95o+4U+STsta9mi97f1smgXsWYKICDeGUf8xUGzd/52/uA==",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyModel": "10.0.0",
+          "Serilog": "4.3.0"
+        }
+      },
+      "Serilog.Sinks.Console": {
+        "type": "Transitive",
+        "resolved": "6.1.1",
+        "contentHash": "8jbqgjUyZlfCuSTaJk6lOca465OndqOz3KZP6Cryt/IqZYybyBu7GP0fE/AXBzrrQB3EBmQntBFAvMVz1COvAA==",
+        "dependencies": {
+          "Serilog": "4.0.0"
+        }
+      },
+      "Serilog.Sinks.Debug": {
+        "type": "Transitive",
+        "resolved": "3.0.0",
+        "contentHash": "4BzXcdrgRX7wde9PmHuYd9U6YqycCC28hhpKonK7hx0wb19eiuRj16fPcPSVp0o/Y1ipJuNLYQ00R3q2Zs8FDA==",
+        "dependencies": {
+          "Serilog": "4.0.0"
+        }
+      },
+      "Serilog.Sinks.File": {
+        "type": "Transitive",
+        "resolved": "7.0.0",
+        "contentHash": "fKL7mXv7qaiNBUC71ssvn/dU0k9t0o45+qm2XgKAlSt19xF+ijjxyA3R6HmCgfKEKwfcfkwWjayuQtRueZFkYw==",
+        "dependencies": {
+          "Serilog": "4.2.0"
+        }
+      },
+      "SQLitePCLRaw.bundle_e_sqlite3": {
+        "type": "Transitive",
+        "resolved": "2.1.12",
+        "contentHash": "mAgscpQMLw5/nfA1Q5oJVAT29yROUo1ifZGbbTpx/lwZpSxMUGoYbKfmvdm8oXER+RzxqBmmQzeBEVKfeHv2nw==",
+        "dependencies": {
+          "SQLitePCLRaw.lib.e_sqlite3": "2.1.12",
+          "SQLitePCLRaw.provider.e_sqlite3": "2.1.12"
+        }
+      },
+      "SQLitePCLRaw.core": {
+        "type": "Transitive",
+        "resolved": "2.1.12",
+        "contentHash": "ETpNw9DY3ckWLgRRAeCHj+GKOuPi61aeczkXhgHexUvqoZBAYg8RYESE2J7O1M7+o6QbdSEZwrw9bfqztUVWXg=="
+      },
+      "SQLitePCLRaw.lib.e_sqlite3": {
+        "type": "Transitive",
+        "resolved": "2.1.12",
+        "contentHash": "fWi8Dbknuhgg72fWinIdjXVaqO1hHL4YBBwVLnr7e1c9TAZwJ0QE38j9syW1hwx6HaqEVTwI+O07WPdZn8Rp0w=="
+      },
+      "SQLitePCLRaw.provider.e_sqlite3": {
+        "type": "Transitive",
+        "resolved": "2.1.12",
+        "contentHash": "W3oH4XIfCzFrgUSDKHhN6N+dgzA5YHOR2VxX8GB6Qy7CyrJJgxPEG8NirgYWlPQC5P2jz2knSsexWu4tDUL33g==",
+        "dependencies": {
+          "SQLitePCLRaw.core": "2.1.12"
+        }
+      },
+      "System.Composition": {
+        "type": "Transitive",
+        "resolved": "10.0.1",
+        "contentHash": "DJkqaWQfho/ReTzKcZD3zJJ6K4GcS154k+T0UCPMBNIOZ2U/lNpyiiWZ6Etw0onWyTH1K+yhICsdmwA5xy2aPQ==",
+        "dependencies": {
+          "System.Composition.AttributedModel": "10.0.1",
+          "System.Composition.Convention": "10.0.1",
+          "System.Composition.Hosting": "10.0.1",
+          "System.Composition.Runtime": "10.0.1",
+          "System.Composition.TypedParts": "10.0.1"
+        }
+      },
+      "System.Composition.AttributedModel": {
+        "type": "Transitive",
+        "resolved": "10.0.1",
+        "contentHash": "mRxYvpCVPAeuLEk0c0kxWJVjbW1/HUoxCgYotOj9eDeQiYcTDOMdCQApsTrHYMN3pHBA8WoF00KGolG632Etaw=="
+      },
+      "System.Composition.Convention": {
+        "type": "Transitive",
+        "resolved": "10.0.1",
+        "contentHash": "dYynUByfVBzYDheNPGxS8UN8AvG/4tXf/coSs1odHOyoh4etv1kad/FrLWLMq4f8NO49NV20Xu+0/y613woTUA==",
+        "dependencies": {
+          "System.Composition.AttributedModel": "10.0.1"
+        }
+      },
+      "System.Composition.Hosting": {
+        "type": "Transitive",
+        "resolved": "10.0.1",
+        "contentHash": "4UGmyBdKWEN1nkqspJlji/nV7XIVm6KGlOC2So0mtM/gKvaNgLz+tUkcbY+6Zpr7dr6ohX1S5yl0RLID5otRHw==",
+        "dependencies": {
+          "System.Composition.Runtime": "10.0.1"
+        }
+      },
+      "System.Composition.Runtime": {
+        "type": "Transitive",
+        "resolved": "10.0.1",
+        "contentHash": "TVfys1gnUIhmXuYfFzyez0fOkDyELe9UwlxYeVlq6FmqmWmt1ouF0OQJ+6ozkHbkaop7uBUaXw7Qb+/o0m+nMg=="
+      },
+      "System.Composition.TypedParts": {
+        "type": "Transitive",
+        "resolved": "10.0.1",
+        "contentHash": "koSfjkdQZfgQr3SyiSIBboDn+GiR0vZ3x9Uek9FJbXK0w5AiATV8KrnMEP8B8OAlO+Y3zQf0CPCNzwH+VIYDKg==",
+        "dependencies": {
+          "System.Composition.AttributedModel": "10.0.1",
+          "System.Composition.Hosting": "10.0.1",
+          "System.Composition.Runtime": "10.0.1"
+        }
+      },
+      "balalaika.index": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.Data.Sqlite": "[10.0.12, )"
+        }
+      },
+      "balalaika.watcher": {
+        "type": "Project",
+        "dependencies": {
+          "Balalaika.Index": "[0.2.1, )"
+        }
+      },
+      "balalaika.workspace": {
+        "type": "Project",
+        "dependencies": {
+          "Balalaika.Index": "[0.2.1, )",
+          "ICSharpCode.Decompiler": "[11.1.0.9782, )",
+          "Microsoft.CodeAnalysis.CSharp.Workspaces": "[5.9.0, )",
+          "Microsoft.CodeAnalysis.Workspaces.MSBuild": "[5.9.0, )"
+        }
+      },
+      "ICSharpCode.Decompiler": {
+        "type": "CentralTransitive",
+        "requested": "[11.1.0.9782, )",
+        "resolved": "11.1.0.9782",
+        "contentHash": "8aXhTlTHfq+Ng+w415pMapSfhsI768AQrix7q3lDf8BBbmPyNUaJVB+mFg2Sv7oCs72MZkK2Zk8K6DE6tsb1Mg=="
+      },
+      "Microsoft.CodeAnalysis.CSharp.Workspaces": {
+        "type": "CentralTransitive",
+        "requested": "[5.9.0, )",
+        "resolved": "5.9.0",
+        "contentHash": "D2zqK/k16fto0yMz0hcXMTkzOxEwMDJyA1mu/KXF9Befwz4zub3MpHQD8FeRxJtVSSsC3dQFYBw7zu7r/pfO7g==",
+        "dependencies": {
+          "Humanizer.Core": "2.14.1",
+          "Microsoft.CodeAnalysis.Analyzers": "5.9.0-1.26328.17",
+          "Microsoft.CodeAnalysis.CSharp": "[5.9.0]",
+          "Microsoft.CodeAnalysis.Common": "[5.9.0]",
+          "Microsoft.CodeAnalysis.Workspaces.Common": "[5.9.0]",
+          "System.Composition": "10.0.1"
+        }
+      },
+      "Microsoft.CodeAnalysis.Workspaces.MSBuild": {
+        "type": "CentralTransitive",
+        "requested": "[5.9.0, )",
+        "resolved": "5.9.0",
+        "contentHash": "BBux6hhD4wXt4lYN2oaY+jV4PnIj5plyqohijgSZtxJQqsvsldPEdii2q9lGrJbNjKEALnldDHz1rmGKG0PeeA==",
+        "dependencies": {
+          "Humanizer.Core": "2.14.1",
+          "Microsoft.Build.Framework": "17.11.48",
+          "Microsoft.CodeAnalysis.Analyzers": "5.9.0-1.26328.17",
+          "Microsoft.CodeAnalysis.Workspaces.Common": "[5.9.0]",
+          "Microsoft.VisualStudio.SolutionPersistence": "1.0.52",
+          "System.Composition": "10.0.1"
+        }
+      },
+      "Microsoft.Data.Sqlite": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.12, )",
+        "resolved": "10.0.12",
+        "contentHash": "xUq9xUc653ue7ac2rMfCaf8UQN+U3zS8poWYlugycpvJllplMM0Mk7v/+MM0CTlu9zGvbGML4BPH8YWhrUOfGw==",
+        "dependencies": {
+          "Microsoft.Data.Sqlite.Core": "10.0.12",
+          "SQLitePCLRaw.bundle_e_sqlite3": "2.1.12",
+          "SQLitePCLRaw.core": "2.1.12"
+        }
+      }
+    }
+  }
+}

@@ -5,6 +5,10 @@
 ### Added
 - `find_references` prints a `Notice:` line before `Total:` when its live answer may be incomplete: load failures of the answering solution, pending index jobs or unapplied watcher changes.
 
+### Changed
+- `Microsoft.Extensions.Logging.Abstractions` and `Microsoft.Extensions.Options` are 10.0.15 (were 10.0.12).
+- Package versions are locked: every project has a `packages.lock.json`, a restore fails when it does not match (`RestoreLockedMode`), and the versions of `Directory.Packages.props` apply to transitive packages too.
+
 ### Fixed
 - `find_references` on a type lists the `new T(...)` expressions that create it, and on a constructor lists target-typed `new(...)` calls; `review_changes` impact counts follow the same rule.
 - A member name that matches several overloads, without parameter types or with parameter types that match none, answers `Ambiguous symbol: ...` with the doc id of each overload instead of answering for the first one.
